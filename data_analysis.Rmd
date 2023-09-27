@@ -1,0 +1,1413 @@
+---
+title: "Mortality Impact of NRP vs DPP Heart Procurement Techniques - Analysis"
+author: "Julia Ran, Anji Wall, Nikhil Narang, Kiran Khush, Jordan Hoffman, Will Parker"
+date: "03/22/2023"
+output:
+  html_document:
+    toc: yes
+    toc_depth: '2'
+    df_print: paged
+    number_sections: yes
+  html_notebook:
+    theme: journal
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.width = 6, fig.height = 4.5, fig.align = "right")
+```
+
+```{=tex}
+\setlength{\parskip}{6pt}
+\newpage
+```
+
+#Load libraries
+```{r load package}
+library(tidyverse)
+library(caret)
+library(haven)
+library(rmdformats)
+library(ggpubr)
+library(here)
+library(readr)
+library(lubridate)
+library(survival)
+library(AER)
+library(stargazer)
+library(survminer)
+library(rms)
+library(tab)
+library(kableExtra)
+library(broom)
+library(finalfit)
+library(gtsummary)
+library(ggsci)
+library(labelled)
+library(rpart)
+library(ppsr)
+library(janitor)
+library(data.table)
+library(ggplot2)
+library(PSweight)
+library(stats)
+library(segmented)
+library(timereg)
+library(MatchIt)
+library(cobalt)
+library(jtools)
+library(splitstackshape)
+library(survey)
+library("sf")
+library(tidyverse)
+library(censusapi)
+library(tidyselect)
+library(tidyr)
+library(ggplot2)
+library(maps)
+library(coxme)
+library(cowplot)
+library(gridExtra)
+library(extrafont)
+library(survRM2)
+library(tableone)
+```
+# Set color scheme
+```{r color scheme}
+custom_colors <- c(
+  `red` = "#A33E3E",
+  `blue` = "#7CA5CB",
+  `green` = "#7EA16B",
+  `orange` = "#E18335",
+  `grey` = "#5A5A5A"
+  )
+
+custom_col <- function(...) {
+  cols <- c(...)
+
+  if (is.null(cols))
+    return (drsimonj_colors)
+
+  custom_colors[cols]
+}
+
+custom_palettes <- list(
+  `main`  = custom_col("green","blue", "red"),
+  `dbd_dcd` = custom_col("green", "orange"),
+  `dpp_nrp` = custom_col("blue", "red"),
+  `quartiles` = custom_col("blue", "green", "grey", "orange", "red")
+)
+
+
+custom_pal <- function(palette = "main", reverse = FALSE, ...) {
+  pal <- custom_palettes[[palette]]
+
+  if (reverse) pal <- rev(pal)
+
+  colorRampPalette(pal, ...)
+}
+
+scale_color_main <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("colour", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+
+scale_color_dbd <- function(palette = "dbd_dcd", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("colour", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+
+scale_color_nrp <- function(palette = "nrp_srr", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("colour", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+
+
+scale_color_quartile <- function(palette = "quartiles", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("colour", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+scale_fill_main <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("fill", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+
+scale_fill_dbd <- function(palette = "dbd_dcd", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("fill", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+
+scale_fill_nrp <- function(palette = "nrp_srr", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("fill", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+```
+# Set KM curve themes
+```{r}
+#set graph themes
+theme_unmatched <- theme_light() +
+             theme(text = element_text(size = 8),
+                   axis.title.x = element_text(size = 8),
+                   axis.title.y = element_text(size = 8),
+                   legend.text = element_text(size = 8),
+                   plot.title = element_text(size = 12, hjust = 0.5),
+                   axis.text.x = element_text(size = 8),
+                   axis.text.y = element_text(size = 8),
+                   panel.grid = element_blank(),
+                   legend.title = element_blank()
+                   )
+
+theme_matched  <- theme_light() +
+             theme(text = element_text(size = 8),
+                   axis.title.x = element_text(size = 8),
+                   axis.title.y = element_blank(),
+                   legend.text = element_text(size = 8),
+                   plot.title = element_text(size = 12, hjust = 0.5),
+                   axis.text.x = element_text(size = 8),
+                   axis.text.y = element_text(size = 8),
+                   panel.grid = element_blank()
+                   )
+
+labels_unmatched <- list(
+  ylab("Survival Probability"),
+  xlab("Time"),
+  ggtitle("Unmatched Cohorts")
+             )
+
+labels_matched <- list(
+  ylab("Survival Probability"),
+  xlab("Time"),
+  ggtitle("Propensity Score Matched Cohorts")
+             )
+```
+
+# Load data
+```{r load data}
+#set location of source file
+path <- "C:/Users/julia/SRP/S&D/dataset/pubsaf2303/"
+load(paste0(path, "clean_data0911.RData"))
+center_geocodes <- read.csv(file = "C:/Users/julia/SRP/S&D/dataset/center_geocodes.csv")
+
+#specify study period
+study_start <- mdy("01/01/2019")
+study_end <- mdy("12/31/2021")
+
+#load font
+loadfonts()
+
+#set location for saving output
+path_save <- "C:/Users/julia/SRP/S&D/Drafts/Distance/"
+
+#add HCV data to complete_data_dcd
+complete_data_dcd <- complete_data_dcd %>% 
+  left_join(tx_hr %>% dplyr::select(PX_ID, DONOR_ID), by = "PX_ID") %>% 
+  left_join(donor %>% dplyr::select(DONOR_ID, DON_HCV_STAT, DON_HCV_NAT)) %>% 
+  set_variable_labels(DON_HCV_NAT = "Donor HCV NAT Serology") %>% 
+  mutate(DON_HCV_NAT = ifelse(DON_HCV_NAT=="P", "Positive", "Negative"))
+
+```
+
+# Figure 1, Histogram of death to cross clamp time
+```{r histogram}
+#histogram of amount of time between death to cross clamp
+hist_clamp <- ggplot(complete_data_dcd, aes(x = death_to_clamp_min, fill = factor(procurement_type)), alpha = 0.7) +
+  geom_histogram(binwidth = 1) +
+  labs(x = "Death-to-Cross-Clamping Time (Minutes)", y = "Frequency", fill = "Procurement Type") +
+  theme_light() +
+  theme(legend.position = "bottom",
+        panel.grid = element_blank(),
+        text = element_text(size = 8)) +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE, labels = c("DPP", "NRP")) +
+  labs(fill = "Procurement Type")
+
+ggsave(paste0(path_save,"Figure1a.tiff"), hist_clamp, dpi = "print",width=7.29, height = 3)
+
+#histogram of withdrawal time
+hist_clamp_withdrawal <- ggplot(complete_data_dcd, aes(x = wdt_time_min, fill = factor(procurement_type)), alpha = 0.7) +
+  geom_histogram(binwidth = 1) +
+  labs(x = "Time from Withdrawal of Life Support to Death (Minutes)", y = "Frequency", fill = "Procurement Type") +
+  theme_light() +
+  theme(legend.position = "bottom",
+        panel.grid = element_blank(),
+        text = element_text(size = 8)) +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE, labels = c("DPP", "NRP")) +
+  labs(fill = "Procurement Type") 
+
+ggsave(paste0(path_save,"Figure1b.tiff"), hist_clamp_agonal, dpi = "print",width=7.29, height = 3)
+
+hist_clamp1 <- ggplot(complete_data_dcd, aes(x = death_to_clamp_min, fill = factor(procurement_type)), alpha = 0.7) +
+  geom_histogram(binwidth = 1) +
+  labs(x = "Death-to-Cross-Clamping Time (Minutes)", y = "Frequency", 
+       fill = "Procurement Type",
+       title = "A") +
+  theme_light() +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE) +
+  theme(plot.title = element_text("A"),
+        legend.position = "none",
+        text = element_text(size = 12, 
+                            family = "Calibri Light"))
+
+  
+
+hist_clamp_agonal1 <- ggplot(complete_data_dcd, aes(x = wdt_time_min, fill = factor(procurement_type)), alpha = 0.7) +
+  geom_histogram(binwidth = 1) +
+  labs(x = "Withdrawal-to-Death Time (Minutes)", y = "Frequency", 
+       fill = "Procurement Type",
+       title = "B") +
+  theme_light() +
+  theme(legend.position = "bottom",
+        panel.grid = element_blank(),
+        text = element_text(size = 12,
+                            family = "Calibri Light")) +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE, labels = c("DPP", "NRP")) +
+  labs(fill = "Procurement Type") 
+
+figure1 <- grid.arrange(hist_clamp1, hist_clamp_agonal1, ncol = 1)
+ggsave(paste0(path_save,"Figure1_0911.tiff"), figure1, dpi = "print",width=15, height = 10)
+
+```
+
+# Figure 2, Transplant center map by number and procurement type 
+```{r figure 2 datasets}
+f1_df <- tx_hr %>%
+    mutate(list_date = CAN_LISTING_DT, 
+           tx_date = REC_TX_DT,
+           last_status = TFL_LASTATUS, 
+           last_fu_date = TFL_LAFUDATE,
+           rec_age = REC_AGE_AT_TX, 
+           can_age = CAN_AGE_AT_LISTING,
+           REC_CTR_ID) %>% 
+  #filter by dates
+  filter(tx_date >= mdy("01/01/2019") & tx_date <= study_end) %>% 
+  #left_join donor characteristics
+  left_join(donor_info, by = c("DONOR_ID", "PX_ID"), suffix = c("_tx", "_d")) %>% 
+  mutate(procurement_type = case_when(
+    don_dcd == "N"~ "DBD",
+    don_dcd == "Y" & death_to_clamp_min >= 50 ~ "DCD_NRP",
+    don_dcd == "Y" & death_to_clamp_min < 50 ~ "DCD_DPP"
+  )) %>% 
+  left_join(donor_geo, by = "DONOR_ID", keep = FALSE, na_matches = "never") %>%
+  rename(don_longitude = LONGITUDE,
+         don_latitude = LATITUDE) %>% 
+  left_join(rec_geo, by = c("REC_CTR_ID" = "TXC_CTR_ID"), keep = FALSE, na_matches = "never") %>% 
+  rename(rec_longitude = LONGITUDE,
+         rec_latitude = LATITUDE)  %>% 
+  filter(complete.cases(PX_ID, tx_date, don_latitude, don_longitude, rec_latitude, rec_longitude, procurement_type)) %>% 
+  mutate(month_year = as.yearmon(tx_date)) %>% 
+  mutate(distance = mapply(haversine, lat1=don_latitude, long1=don_longitude, lat2=rec_latitude, long2=rec_longitude)) %>% 
+  mutate(month_year = as.yearmon(tx_date),
+         year = year(tx_date)) 
+
+f2_df <- f1_df %>%
+  filter(tx_date >= study_start & tx_date <= study_end) %>% 
+  filter(procurement_type != "DBD") %>% 
+  group_by(REC_CTR_CD, procurement_type) %>% 
+  count()
+```
+```{r figure 2a}
+# Calculate the sum of n for each REC_CTR_CD
+sum_by_type <- f1_df %>% 
+  filter(tx_date >= study_start, tx_date <= study_end) %>% 
+  group_by(REC_CTR_CD) %>% 
+  mutate(DCD_DPP = sum(procurement_type == "DCD_DPP"),
+         DCD_NRP = sum(procurement_type == "DCD_NRP")) %>% 
+ dplyr::select(REC_CTR_CD, DCD_DPP, DCD_NRP, rec_latitude, rec_longitude) %>% 
+  distinct() %>% 
+  pivot_longer(cols = c(DCD_NRP, DCD_DPP),
+               names_to = "procurement_type", values_to = "count") %>% 
+  rename(long = rec_longitude, 
+         lat = rec_latitude) %>% 
+  group_by(procurement_type) %>% 
+  arrange(desc(count))
+
+map_data <- map_data("state") %>%dplyr::select(-subregion) 
+
+# New facet label names for supp variable
+facet_labels <- c("NRP", "DPP")
+names(facet_labels) <- c("DCD_NRP", "DCD_DPP")
+
+
+procurement_map1 <- ggplot() +
+  geom_polygon(data = map_data, aes(x = long, y = lat, group = group), fill = "white", color = "lightgray") +
+  xlim(c(-125,-70)) +
+  ylim(c(25, 50)) +
+  coord_fixed(1.3) +
+  geom_point(data = sum_by_type,
+             aes(x=long, 
+                 y=lat, 
+                 size=count, 
+                 fill=procurement_type),
+             shape = 21,
+             alpha = 0.7,
+             stroke = NA) +
+  theme_light() +
+  theme(axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.text = element_blank()) +
+  guides(alpha = FALSE, 
+         fill = guide_legend(nrow=2,byrow=TRUE),
+         color = guide_legend(nrow=2,byrow=TRUE),
+         size = guide_legend(override.aes =  list(fill = alpha("grey", 0.7), 
+                                                  col = alpha("grey", 0.7)))) +
+  scale_size(
+      range = c(1, 15),
+      guide = guide_legend(
+        direction = "horizontal",
+        nrow = 2,
+      label.position = "bottom",title = "Count")) +
+   theme(legend.title = element_blank(),
+        legend.text=element_text(size=10,family = "Calibri Light"),
+        legend.position = "bottom",
+        legend.key.height = unit(3,"mm"),
+        legend.key.width = unit(10,"mm"),
+        legend.margin = margin(t=0, r=0, b=0, l=0, unit="cm"),
+        legend.background = element_blank()
+        ) +
+  theme(plot.margin=unit(c(0,2,0,2),"mm")) +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE, labels = c("DPP", "NRP"))
+
+
+ggsave(paste0(path_save,"Figure2a.tiff"), procurement_map1, dpi = "print",width=7.29, height = 5)
+```
+```{r figure 2b}
+# Calculate the sum of n for each REC_CTR_CD
+sum_n <- f2_df %>% 
+  group_by(REC_CTR_CD) %>% 
+  dplyr::summarize(total_n = sum(n))
+
+# Reorder REC_CTR_CD based on total_n
+f2_df$REC_CTR_CD <- factor(f2_df$REC_CTR_CD, levels = sum_n$REC_CTR_CD[order(decreasing = TRUE, sum_n$total_n)])
+
+# Create the stacked bar chart with arranged bars
+count_by_ctr <- ggplot(f2_df, aes(fill = procurement_type, y = n, x = REC_CTR_CD)) +
+  geom_bar(position = "stack", stat = "identity") +
+  theme_light() +
+  theme(axis.text.x = element_blank(), 
+        axis.ticks.x = element_blank(),
+        panel.grid = element_blank()) +
+  ylab("Number of DCD Transplants") +   
+  xlab("Transplant Center") +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE, labels = c("DPP", "NRP")) +
+  scale_color_nrp(palette = "dpp_nrp", discrete = TRUE, guide = "none")+
+  labs(fill = "Procurement Type")
+
+
+ggsave(paste0(path_save,"Figure2b.tiff"), plot = count_by_ctr,height = 7,width = 14,units = "in")
+
+```
+
+```{r combine 2a and 2b}
+procurement_map2 <- ggplot() +
+  geom_polygon(data = map_data, aes(x = long, y = lat, group = group), fill = "white", color = "lightgray") +
+  xlim(c(-125,-70)) +
+  ylim(c(25, 50)) +
+  coord_fixed(1.3) +
+  geom_point(data = sum_by_type,
+             aes(x=long, 
+                 y=lat, 
+                 size=count, 
+                 fill=procurement_type),
+             shape = 21,
+             alpha = 0.7,
+             stroke = NA) +
+  theme_light() +
+  theme(axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.text = element_blank()) +
+  guides(alpha = FALSE, 
+         fill = FALSE,
+         color = FALSE,
+         size = guide_legend(override.aes = list(fill = alpha("grey", 0.7),
+                             col = alpha("grey", 0.7)),
+                             title = "Count")) +
+  scale_size(
+      range = c(1, 15),
+      guide = guide_legend(
+        title.hjust = 0,
+        label.hjust = 0,
+        direction = "horizontal",
+        nrow = 2,
+      label.position = "right")) +
+   theme(legend.title = element_text(size = 12,
+                                     family = "Calibri Light"),
+        legend.text=element_text(size=10,family = "Calibri Light"),
+        legend.position = "right",
+        legend.key.height = unit(3,"mm"),
+        legend.key.width = unit(3,"mm"),
+        legend.background = element_blank(),
+        legend.justification = c("right","bottom"),
+        legend.text.align = 0,
+        legend.title.align = 0,
+        ) +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE) +
+  theme(text = element_text(size = 12, family = "Calibri Light"),
+        panel.border = element_blank()) +
+  theme(plot.margin=unit(c(0,0,0,0),"cm"),
+        plot.title.position = "panel") 
+
+count_by_ctr1 <- ggplot(f2_df, aes(fill = procurement_type, y = n, x = REC_CTR_CD)) +
+  geom_bar(position = "stack", stat = "identity") +
+  theme_light() +
+  ylab("Number of DCD Transplants") +   
+  xlab("Transplant Center") +
+  guides(fill = guide_legend(title = "Procurement Type",
+                             title.hjust = 1,
+                             label.hjust = 1)) +
+  theme_light()+
+  scale_size(
+    guide = guide_legend(
+        title.hjust = 1,
+        label.hjust = 1,
+        direction = "horizontal",
+        nrow = 2,
+      label.position = "right")) +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE, labels= c("DPP", "NRP")) +
+  theme(legend.position = c(1,1),
+        legend.justification = c("right", "top")) +
+  theme(legend.title = element_text(size = 12,
+                                     family = "Calibri Light"),
+        legend.text=element_text(size=10,family = "Calibri Light"),
+        legend.position = c(1,1),
+        legend.key.height = unit(3,"mm"),
+        legend.key.width = unit(3,"mm"),
+        legend.background = element_blank(),
+        legend.justification = c("right","top"),
+        legend.text.align = 1,
+        legend.title.align = 1,
+        axis.text.x = element_blank(), 
+        axis.ticks.x = element_blank(),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        text = element_text(size = 12, family = "Calibri Light")
+        ) 
+  
+  
+figure2<- grid.arrange(procurement_map2, count_by_ctr1, ncol = 1)
+
+ggsave(paste0(path_save,"Figure2.tiff"), figure2, dpi = "print",width=10, height = 10)
+
+```
+
+# Figure 3, Map of source of organ by procurement type 
+
+```{r figure 3}
+data_dcd_non_identical <- f1_df %>% 
+  filter(procurement_type != "DBD") %>% 
+  filter(rec_longitude != don_longitude & rec_latitude != don_latitude) %>%
+  dplyr::select(rec_longitude, rec_latitude, don_longitude, don_latitude, REC_CTR_CD, DON_HOSP_PROV_NUM, procurement_type, distance)
+
+data_dcd_identical <- f1_df %>% 
+  filter(procurement_type != "DBD") %>% 
+  filter(rec_longitude == don_longitude & rec_latitude == don_latitude) %>% 
+  group_by(REC_CTR_CD, DON_HOSP_PROV_NUM, procurement_type) %>% 
+  add_count() %>% 
+  dplyr::select(rec_longitude, rec_latitude, don_longitude, don_latitude, REC_CTR_CD, DON_HOSP_PROV_NUM, procurement_type, n)
+
+
+route_by_type <- ggplot() +
+  geom_polygon(data = map_data, aes(x = long, y = lat, group = group), fill = "white", color = "lightgray") +
+  xlim(c(-125,-70)) +
+  ylim(c(25, 50)) +
+  coord_fixed(1.3) +
+geom_curve(data=data_dcd_non_identical,
+             aes(x=don_longitude, y=don_latitude, 
+                 xend=rec_longitude, 
+                 yend=rec_latitude, 
+                 col = procurement_type, alpha = distance),
+             size=.5,
+             curvature=0.2) +
+  geom_point(data=data_dcd_non_identical,
+             aes(x=rec_longitude, y=rec_latitude),
+                 color = "black",
+             size = 1) +
+  facet_grid(cols = vars(procurement_type),
+             labeller = labeller(.cols = facet_labels)) +
+        theme(strip.background = element_rect(fill="grey",
+                                        colour="grey",
+                                        size = unit(3,"mm")),
+              strip.text = element_text(size=10, colour="white",family = "Calibri Light"),              strip.text.x = element_text(margin = margin(b=1,t=1))) +
+    theme_light() +
+  theme(axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.text = element_blank(),
+        legend.position = "bottom") +
+  scale_color_main(palette = "dpp_nrp", discrete = TRUE, labels = c("DPP", "NRP")) +
+  labs(color = "Procurement Type", alpha = "Distance (NM)") 
+
+ggsave(paste0(path_save,"Figure3_0905.tiff"), route_by_type, dpi = "print",width=7.29, height = 5)
+```
+
+
+
+# Table 1, Donor and recipient characteristics by procurement type 
+
+```{r table 1}
+table1_data <- complete_data_dcd %>% 
+  mutate(dpp_nrp = case_when(
+    procurement_type == "DCD_DPP" ~ "DPP",
+    procurement_type == "DCD_NRP" ~ "NRP"
+  ))
+  
+table1 <- CreateTableOne(data = table1_data,
+               vars = c("rec_age_60", 
+                        "status",
+                         "rec_bilirubin",
+                         "rec_dialysis",
+                         "rec_sex",
+                         "simple_diagnosis",
+                         "rec_infection",
+                         "treatment",
+                         "rec_race_desc",
+                         "functional_status",
+                         "rec_abo",
+                         "rec_bmi",
+                         "rec_co",
+                         "rec_pcwp",
+                         "don_age",
+                         "don_sex",
+                         "don_bmi",
+                         "don_lvef",
+                         "don_smoke",
+                         "don_abo",
+                        "wdt_time_min",
+                        "DON_HCV_NAT",
+                        "don_angio"),
+               factorVars = c("rec_age_60", 
+                         "status",
+                         "rec_dialysis",
+                         "rec_sex",
+                         "simple_diagnosis",
+                         "treatment",
+                         "rec_race_desc",
+                         "functional_status",
+                         "rec_abo",
+                         "rec_edu",
+                         "don_sex",
+                         "don_smoke",
+                         "don_abo",
+                         "DON_HCV_NAT"),
+               strata = "dpp_nrp",
+              )
+
+table1 <- print(table1, 
+      catDigits=1, 
+      contDigits=2, 
+      pDigits=3, 
+      quote=FALSE, 
+      missing=FALSE, 
+      explain=TRUE, 
+      printToggle=TRUE,
+      test=TRUE, 
+      smd=FALSE, 
+      noSpaces=FALSE, 
+      padColnames=FALSE, 
+      varLabels=TRUE, 
+      format=c("fp","f","p","pf")[1], 
+      showAllLevels=FALSE, 
+      cramVars=NULL, 
+      dropEqual=FALSE, 
+      exact=NULL, 
+      nonnormal=NULL, 
+      minMax=FALSE, 
+      formatOptions=list(scientific=FALSE))
+
+write.csv(table1, file = paste0(path_save, "table1_0911.csv"))
+```
+
+
+# Survival Analysis
+```{r}
+#make agonal time and bmi into bins
+complete_data_dcd <- complete_data_dcd %>% 
+  mutate(wdt_time_qtile = ntile(wdt_time_min,4)) %>%
+  mutate(wdt_time_qtile = factor(wdt_time_qtile, levels = c("1", "2", "3", "4"),labels = c("1st quartile", "2nd quartile", "3rd quartile", "4th quartile"))) %>%   mutate(don_bmi_qtile = ntile(don_bmi, 4)) %>% 
+  mutate(don_bmi_qtile = factor(don_bmi_qtile, levels = c("1", "2", "3", "4"),labels = c("1st quartile", "2nd quartile", "3rd quartile", "4th quartile")))
+
+```
+
+## Unadjusted Kaplan-Meier Curve
+```{r}
+# Fit Kaplan-Meier survival curves for each group
+fit <- survfit(Surv(surv_time_365, dead_1y) ~ procurement_type, data = complete_data_dcd)
+
+grid.draw.ggsurvplot <- function(x){
+  survminer:::print.ggsurvplot(x, newpage = FALSE)
+}
+
+km_plot <- ggsurvplot(fit, data = complete_data_dcd, risk.table = TRUE, 
+           legend.labs = c("DCD DPP", "DCD NRP"),
+           legend.title = element_blank(),
+           pval = TRUE,
+           conf.int = TRUE,
+           palette = c("#7CA5CB","#A33E3E"),
+           xlab = "Time", ylab = "Survival Probability",
+           title = "Kaplan-Meier Survival Curve",
+           ylim = c(0.80, 1.0),
+           risk.table.fontsize = 3,  # Adjust the font size for the risk table
+           break.time.by = 100,      # Set the break time for the x-axis
+           xlab.text.size = 8,       # Adjust the font size for x-axis label
+           ylab.text.size = 8,       # Adjust the font size for y-axis label
+           legend.text.size = 8,     # Adjust the font size for legend text
+           ggtheme = theme_light() +
+             theme(text = element_text(size = 8),
+                   axis.title.x = element_text(size = 8),
+                   axis.title.y = element_text(size = 8),
+                   legend.text = element_text(size = 8),
+                   plot.title = element_text(size = 12),
+                   axis.text.x = element_text(size = 8),
+                   axis.text.y = element_text(size = 8),
+                   panel.grid = element_blank()
+)) 
+
+km_plot_no_ci <- ggsurvplot(fit, data = complete_data_dcd, risk.table = TRUE, 
+           legend.labs = c("DCD DPP", "DCD NRP"),
+           legend.title = element_blank(),
+           pval = TRUE,
+           conf.int = FALSE,
+           palette = c("#7CA5CB","#A33E3E"),
+           xlab = "Time", ylab = "Survival Probability",
+           title = "Kaplan-Meier Survival Curve",
+           ylim = c(0.80, 1.0),
+           risk.table.fontsize = 3,  # Adjust the font size for the risk table
+           break.time.by = 100,      # Set the break time for the x-axis
+           xlab.text.size = 8,       # Adjust the font size for x-axis label
+           ylab.text.size = 8,       # Adjust the font size for y-axis label
+           legend.text.size = 8,     # Adjust the font size for legend text
+           ggtheme = theme_light() +
+             theme(text = element_text(size = 8),
+                   axis.title.x = element_text(size = 8),
+                   axis.title.y = element_text(size = 8),
+                   legend.text = element_text(size = 8),
+                   plot.title = element_text(size = 12),
+                   axis.text.x = element_text(size = 8),
+                   axis.text.y = element_text(size = 8),
+                   panel.grid = element_blank()
+)) 
+
+#compare survival between procurement groups
+survdiff(Surv(surv_time_365, dead_1y) ~ procurement_type, data = complete_data_dcd)
+
+```
+## 1:1 Propensity Score Match
+```{r}
+#pre-match matchit object
+data_nrp_dpp <- complete_data_dcd %>% 
+  mutate(nrp = ifelse(procurement_type== "DCD_NRP", 1, 0))
+
+bal.tab(procurement_type ~ agonal_time_bin +
+                   rec_age_60 +
+                   status +
+                   rec_bilirubin +
+                   rec_dialysis +
+                   rec_sex +
+                   simple_diagnosis +
+                   rec_infection +
+                   treatment +
+                   rec_race_desc +
+                   tMCS +
+                   vad +
+                   functional_status +
+                   rec_abo +
+                   rec_bmi +
+                   rec_co +
+                   rec_pcwp +
+                   don_age +
+                   don_sex +
+                   don_bmi +
+                   don_lvef +
+                   don_abo,  
+                    data = data_nrp_dpp,
+        estimand = "ATT",
+        thresholds = c(m = 0.1)
+)
+
+
+#1:1 OLS PS matching with replacement
+post_match_nrp_dpp <- matchit(nrp ~ 
+                                wdt_time_qtile +
+                                rec_age_60 +
+                                treatment +
+                                don_age +
+                                don_bmi,
+                   data = data_nrp_dpp,method = "optimal",
+                   distance = "glm",
+                   link = "logit",
+                   estimand = "ATT",
+                   replace = FALSE)
+
+
+bal.tab(post_match_nrp_dpp, stats = c("m", "v"), thresholds = c(m = .1))
+
+#visualize the distribution of propensity scores of those who were matched
+plot(post_match_nrp_dpp, type = "jitter", interactive = FALSE)
+
+#visualize balance
+plot(post_match_nrp_dpp, type = "density", interactive = FALSE, 
+     which.xs = ~ don_bmi_qtile + agonal_time_bin)
+
+
+new.names <- c(`wdt_time_qtile_1st quartile` = "Withdrawal-to-Death Time: 1st Quartile",
+               treatment_ECMO = "Recipient Treatment: ECMO",
+               `treatment_High-dose Inotropes` = "Recipient Treatment: High-dose Inotropes",
+               treatment_None = "Recipient Treatment: None",
+               `rec_age_60_Over 60` = "Recipient Age: Over 60",
+               `wdt_time_qtile_2nd quartile` = "Withdrawal-to-Death Time: 2nd Quartile",
+               `treatment_IABP` = "Recipient Treatment: IABP",
+               `wdt_time_qtile_3rd quartile` = "Withdrawal-to-Death Time: 3rd Quartile",
+               treatment_Exception = "Recipient Treatment: Exception",
+               `treatment_Other MCS` = "Recipient Treatment: Other MCS",
+               `don_age` = "Donor Age (Years)",
+               `treatment_Low-dose Inotropes` = "Recipient Treatment: Low-dose Inotropes",
+               `wdt_time_qtile_4th quartile` = "Withdrawal-to-Death Time: 4th Quartile",
+               treatment_LVAD = "Recipient Treatment: LVAD",
+               `don_bmi` = "Donor BMI")
+
+love_plot_nrp_dpp <- love.plot(post_match_nrp_dpp, 
+          drop.distance = TRUE, 
+          stars = "raw",
+          var.order = "adjusted",
+          var.names = new.names,
+          abs = TRUE,
+          line = TRUE, 
+          thresholds = c(m = .1),
+          colors = c("#A33E3E", "#7CA5CB")) +
+  theme_light() +
+  theme(legend.position = c(.75, .3),
+        legend.box.background = element_rect(), 
+        legend.box.margin = margin(1, 1, 1, 1),
+        axis.text.y = element_text(size = 10),
+        panel.grid = element_blank())
+
+
+ggsave(paste0(path_save,"Supplemental Figure 1 0918.tiff"), plot = love_plot_nrp_dpp,height = 7,width = 14,units = "in")
+
+
+#get matched data
+matched_nrp_dpp <- match.data(post_match_nrp_dpp, group = "all",distance = "prop_score", data = data_nrp_dpp, drop.unmatched = TRUE)
+
+#summarize
+View(matched_nrp_dpp %>% group_by(nrp) %>% count())
+```
+
+
+## Kaplan-Meier Curve after Propensity Score Matching
+```{r}
+# Fit Kaplan-Meier survival curves for each group
+fit_matched_dcd <- survfit(Surv(surv_time_365, dead_1y) ~ nrp, data = matched_nrp_dpp)
+
+fit_dcd <- survfit(Surv(surv_time_365, dead_1y) ~ nrp, data = data_nrp_dpp)
+
+#adjust grid structure
+grid.draw.ggsurvplot <- function(x){
+  survminer:::print.ggsurvplot(x, newpage = FALSE)
+}
+
+#pre-match KM with CI
+km_dcd_plot <- ggsurvplot(fit_dcd, data = data_nrp_dpp, risk.table = TRUE, 
+           legend.labs = c("DPP", "NRP"),
+           pval = TRUE,
+           conf.int = TRUE,
+           palette = c("#7CA5CB","#A33E3E"),
+           ylim = c(0.80, 1.0),
+           xlim = c(0,365),
+           risk.table.fontsize = 3,  # Adjust the font size for the risk table
+           break.time.by = 100,      # Set the break time for the x-axis
+           ggtheme = theme_unmatched) +
+  labels_unmatched
+
+ggsave(paste0(path_save, "km_dcd_plot_0905.tiff"),km_dcd_plot, dpi = "print",width=7.29, height = 5)
+
+
+#matched KM
+km_dcd_matched <- ggsurvplot(fit_matched_dcd, data = matched_nrp_dpp, risk.table = TRUE, 
+           legend.labs = c("DPP","NRP"),
+           legend.title = element_blank(),
+           pval = TRUE,
+           conf.int = TRUE,
+           palette = c("#7CA5CB","#A33E3E"),
+           ylim = c(0.80, 1.0),
+           xlim = c(0,365),
+           risk.table.fontsize = 3,  # Adjust the font size for the risk table
+           break.time.by = 100,      # Set the break time for the x-axis
+           ggtheme = theme_matched
+) +
+  labels_matched
+
+ggsave(paste0(path_save, "km_dcd_matched_0905.tiff"),km_dcd_matched, dpi = "print",width=7.29, height = 5)
+
+
+#proportion test
+prop.test(x = c(102-9,102-7), n = c(102,102))
+#compare survival between procurement groups
+#post-match
+survdiff(Surv(surv_time_365, dead_1y) ~ nrp, data = matched_nrp_dpp)
+#pre-match
+survdiff(Surv(surv_time_365, dead_1y) ~ nrp, data = data_nrp_dpp)
+
+#make graphs with CI
+dcd_with_ci <- list()
+dcd_with_ci[[1]] <- km_dcd_plot
+dcd_with_ci[[2]] <- km_dcd_matched 
+dcd_with_ci <- arrange_ggsurvplots(dcd_with_ci, print = TRUE,
+  ncol = 2, nrow = 1, risk.table.height = 0.2)
+
+ggsave(paste0(path_save, "Figure4_w_CI_0918.tiff"),dcd_with_ci, dpi = "print",width=7.29, height = 5)
+```
+
+# Estimate Cox-Proportional Hazard Fixed Effect Model
+## Table 2, Cox-Proportional Hazard Model Output
+```{r}
+fit_cox_matched <- coxph(Surv(surv_time_365, dead_1y) ~
+                      nrp,
+                    data = matched_nrp_dpp)
+
+summary(fit_cox_matched)
+
+fit_cox_unmatched <- coxph(Surv(surv_time_365, dead_1y) ~
+                      nrp,
+                    data = data_nrp_dpp)
+
+summary(fit_cox_unmatched)
+
+export_summs(fit_cox_unmatched,
+     fit_cox_matched, 
+     scale = TRUE,
+     model.names = c("Unmatched", "PS Matched"),
+     coefs = c("Procurement Type NRP" = "nrp"),
+     number_format = "%.2f",
+     statistics = c(N = "n", "N Events" = "nevent"),
+     align = ".",
+     error_format = "({conf.low} to {conf.high})",
+     to.file = "xlsx",
+     file.name = paste0(path_save,"Table2_1.xlsx"))
+                             
+```
+
+# Estimate Mixed Effect Model
+## COXME model
+```{r}
+
+fit_coxme_matched <- coxme(Surv(surv_time_365, dead_1y) ~
+                      nrp + (1|REC_CTR_CD),
+                    data = matched_nrp_dpp)
+
+summary(fit_coxme_matched)
+
+fit_coxme_unmatched_full <- coxme(Surv(surv_time_365, dead_1y) ~
+                      nrp + wdt_time_qtile + rec_age_60 + treatment + don_age + don_bmi + (1|REC_CTR_CD),
+                    data = data_nrp_dpp)
+
+data_nrp_dpp$treatment <- relevel(as.factor(data_nrp_dpp$treatment), ref = "LVAD")
+fit_coxme_unmatched_empty <- coxme(Surv(surv_time_365, dead_1y) ~
+                      nrp + (1|REC_CTR_CD),
+                    data = data_nrp_dpp)
+
+fit_coxme_unmatched_empty
+fit_coxme_unmatched_full
+
+```
+
+## Split matched data
+```{r split matched data}
+matched_nrp <- matched_nrp_dpp %>% filter(nrp ==1) %>% dplyr::select(surv_time_365, dead_1y, REC_CTR_CD)
+
+matched_dpp <- matched_nrp_dpp %>% filter(nrp==0) %>% dplyr::select(surv_time_365, dead_1y, REC_CTR_CD)
+```
+
+## NRP variation
+```{r nrp variations}
+#NRP only, matched data
+model_nrp <- coxph(Surv(surv_time_365,dead_1y) ~ frailty(REC_CTR_CD,distribution="gaussian"),
+  data=matched_nrp)
+
+frailty_nrp <- model_nrp$history[[1]]$theta
+
+sf_nrp <- survfit(model_nrp)
+
+surv.time_nrp <- sf_nrp$time
+H0_nrp <- sf_nrp$cumhaz
+
+h0_nrp <- c(H0_nrp[1],diff(H0_nrp))
+
+frailty_nrp1 <- model_nrp$frail
+frailty.summary_nrp <- quantile(frailty_nrp1)
+
+h.min_nrp <- h0_nrp*exp(-2*sqrt(frailty_nrp))
+h.q1_nrp <- h0_nrp*exp(-sqrt(frailty_nrp))
+h.q3_nrp <- h0_nrp*exp(sqrt(frailty_nrp))
+h.max_nrp <- h0_nrp*exp(2*sqrt(frailty_nrp))
+
+H.min_nrp <- cumsum(h.min_nrp)
+H.q1_nrp <- cumsum(h.q1_nrp)
+H.q3_nrp <- cumsum(h.q3_nrp)
+H.max_nrp <- cumsum(h.max_nrp)
+
+S0_nrp <- exp(-H0_nrp)
+S.min_nrp <- exp(-H.min_nrp)
+S.q1_nrp <- exp(-H.q1_nrp)
+S.q3_nrp <- exp(-H.q3_nrp)
+S.max_nrp <- exp(-H.max_nrp)
+```
+
+## DPP variation
+```{r dpp variations}
+#dpp
+model_dpp <- coxph(Surv(surv_time_365,dead_1y) ~ frailty(REC_CTR_CD,distribution="gaussian"),
+  data=matched_dpp)
+
+frailty_dpp <- model_dpp$history[[1]]$theta
+
+sf_dpp <- survfit(model_dpp)
+
+surv.time_dpp <- sf_dpp$time
+H0_dpp <- sf_dpp$cumhaz
+
+h0_dpp <- c(H0_dpp[1],diff(H0_dpp))
+
+frailty_dpp1 <- model_dpp$frail
+frailty.summary <- quantile(frailty_dpp)
+
+h.min_dpp <- h0_dpp*exp(-2*sqrt(frailty_dpp))
+h.q1_dpp <- h0_dpp*exp(-sqrt(frailty_dpp))
+h.q3_dpp <- h0_dpp*exp(sqrt(frailty_dpp))
+h.max_dpp <- h0_dpp*exp(2*sqrt(frailty_dpp))
+
+H.min_dpp <- cumsum(h.min_dpp)
+H.q1_dpp <- cumsum(h.q1_dpp)
+H.q3_dpp <- cumsum(h.q3_dpp)
+H.max_dpp <- cumsum(h.max_dpp)
+
+S0_dpp <- exp(-H0_dpp)
+S.min_dpp <- exp(-H.min_dpp)
+S.q1_dpp <- exp(-H.q1_dpp)
+S.q3_dpp <- exp(-H.q3_dpp)
+S.max_dpp <- exp(-H.max_dpp)
+
+# Create the data frames for DPP and NRP
+dpp_data <- data.frame(
+  time = surv.time_dpp,
+  max = S.max_dpp,
+  q3 = S.q3_dpp,
+  avg = S0_dpp,
+  q1 = S.q1_dpp,
+  min = S.min_dpp) %>% 
+  mutate(procurement_type = "DPP")
+
+nrp_data <- data.frame(
+  time = surv.time_nrp,
+  max = S.max_nrp,
+  q3 = S.q3_nrp,
+  avg = S0_nrp,
+  q1 = S.q1_nrp,
+  min = S.min_nrp) %>% 
+  mutate(procurement_type = "NRP")
+
+#bind two datasets
+combined_data <- rbind(dpp_data, nrp_data)
+
+```
+
+## Figure 5. 
+```{r variation graphs}
+# Wrap the legend labels into two lines
+legend_labels <- as.factor(c(
+  "Hazard 2 SD above mean",
+  "Hazard 1 SD above mean",
+  "Average transplant center",
+  "Hazard 1 SD below mean",
+  "Hazard 2 SD below mean"
+))
+wrapped_labels <- str_wrap(legend_labels, width = 10)
+
+# Create the base plot
+base_plot <- ggplot(combined_data, aes(x = time)) +
+  geom_line(aes(y = max, color = wrapped_labels[1])) +
+  geom_line(aes(y = q3, color = wrapped_labels[2]), linetype = "dashed") +
+  geom_line(aes(y = avg, color = wrapped_labels[3]), linetype = "dotted") +
+  geom_line(aes(y = q1, color = wrapped_labels[4]), linetype = "dotdash") +
+  geom_line(aes(y = min, color = wrapped_labels[5]), linetype = "longdash") +
+  theme_light() +
+  scale_color_manual(values = c("#7CA5CB","#7EA16B","#5A5A5A","#E18335","#A33E3E"),breaks = wrapped_labels) +
+  ylim(0.88, 1.00)
+ 
+# Create side-by-side plots using facet_grid
+combined_plot <- base_plot +
+  facet_grid(. ~ procurement_type, scales = "free_x", space = "free_x") +
+        theme(strip.background = element_rect(fill="grey",
+                                        colour="grey",
+                                        size = unit(3,"mm")),
+              strip.text = element_text(size=10, colour="white",family = "Calibri Light"),              strip.text.x = element_text(margin = margin(b=1,t=1))) +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.key.width = unit(2, "lines"),
+    legend.title = element_blank()
+  ) +
+  labs(
+    x = "Time",
+    y = "Survival Probability" # Updated Y-axis title
+    )
+
+
+#print graph
+ggsave(paste0(path_save,"Figure5_0905.tiff"), plot = combined_plot,height = 3,width = 7.29,units = "in")
+
+```
+
+# Estimate restricted mean survival time
+```{r}
+survdata_unmatched <- data_nrp_dpp %>% 
+  dplyr::select(nrp,
+         surv_time_365,
+         dead_1y) 
+
+unmatched_surv_time <- as.numeric(survdata_unmatched$surv_time_365)
+unmatched_dead_1y <- as.numeric(survdata_unmatched$dead_1y)
+unmatched_nrp <- as.numeric(survdata_unmatched$nrp)
+
+mean_survival_unmatched<- rmst2(unmatched_surv_time, unmatched_dead_1y,unmatched_nrp)
+
+
+survdata_matched <- matched_nrp_dpp %>% 
+  dplyr::select(nrp,
+         surv_time_365,
+         dead_1y) 
+
+matched_surv_time <- as.numeric(survdata_matched$surv_time_365)
+matched_dead_1y <- as.numeric(survdata_matched$dead_1y)
+matched_nrp <- as.numeric(survdata_matched$nrp)
+
+mean_survival_matched<- rmst2(matched_surv_time, matched_dead_1y,matched_nrp)
+
+mean_survival_matched
+mean_survival_unmatched
+```
+
+```{r}
+#distribution of agonal time
+nrp_agonal <- complete_data_dcd %>% filter(procurement_type=="DCD_NRP") %>% dplyr::select(agonal_time_min) %>% unlist()
+
+dpp_agonal <- complete_data_dcd %>% filter(procurement_type=="DCD_DPP") %>% dplyr::select(agonal_time_min) %>% unlist()
+
+t.test(nrp_agonal, dpp_agonal)
+
+max(nrp_agonal)
+dpp_data
+```
+
+
+
+# Sensitivity Analysis
+## Adding distance
+```{r}
+data_nrp_dpp <- data_nrp_dpp %>% 
+  mutate(distance_qtile = ntile(distance,4)) %>% 
+  mutate(distance_qtile = factor(distance_qtile, levels = c("1", "2", "3", "4"),labels = c("1st quartile", "2nd quartile", "3rd quartile", "4th quartile")))
+
+#add distance
+post_match_nrp_dpp1 <- matchit(nrp ~ 
+                                agonal_time_bin +
+                                rec_age_60 +
+                                treatment +
+                                don_age +
+                                don_bmi_qtile +
+                                don_angio +
+                                distance_qtile,
+                   data = data_nrp_dpp,method = "optimal",
+                   distance = "glm",
+                   link = "logit",
+                   estimand = "ATT",
+                   replace = FALSE)
+
+new.names <- c(`agonal_time_bin_20+` = "Agonal Time: 20+ Minutes",
+               treatment_ECMO = "Recipient Treatment: ECMO",
+               `treatment_High-dose Inotropes` = "Recipient Treatment: High-dose Inotropes",
+               treatment_None = "Recipient Treatment: None",
+               `don_bmi_qtile_2nd quartile` = "Donor BMI: 2nd Quartile",
+               `don_bmi_qtile_4th quartile` = "Donor BMI: 4th Quartile",
+               `rec_age_60_Over 60` = "Recipient Age: Over 60",
+               `agonal_time_bin_0-4` = "Agonal Time: 0-4 Minutes",
+               `treatment_IABP` = "Recipient Treatment: IABP",
+               `agonal_time_bin_5-9` = "Agonal Time: 5-9 Minutes",
+               treatment_Exception = "Recipient Treatment: Exception",
+               don_angio_Performed = "Donor Coronary Angiogram: Performed",
+               `treatment_Other MCS` = "Recipient Treatment: Other MCS",
+               `don_age` = "Donor Age (Years)",
+               `treatment_Low-dose Inotropes` = "Recipient Treatment: Low-dose Inotropes",
+               `agonal_time_bin_10-14` = "Agonal Time: 10-14 Minutes",
+               `agonal_time_bin_15-19` = "Agonal Time: 15-19 Minutes",
+               treatment_LVAD = "Recipient Treatment: LVAD",
+               `don_bmi_qtile_1st quartile` = "Donor BMI: 1st Quartile",
+               `don_bmi_qtile_3rd quartile` = "Donor BMI: 3rd Quartile",
+               `distance_qtile_1st quartile` = "Distance: 1st Quartile",
+               `distance_qtile_2nd quartile` = "Distance: 2nd Quartile",
+               `distance_qtile_3rd quartile` = "Distance: 3rd Quartile",
+               `distance_qtile_4th quartile` = "Distance: 4th Quartile")
+
+love.plot(post_match_nrp_dpp1, 
+          drop.distance = TRUE, 
+          stars = "raw",
+          var.order = "adjusted",
+          var.names = new.names,
+          abs = TRUE,
+          line = TRUE, 
+          thresholds = c(m = .1),
+          colors = c("#A33E3E", "#7CA5CB")) +
+  theme_light() +
+  theme(legend.position = c(.75, .3),
+        legend.box.background = element_rect(), 
+        legend.box.margin = margin(1, 1, 1, 1),
+        axis.text.y = element_text(size = 10),
+        panel.grid = element_blank())
+
+#get matched data
+matched_nrp_dpp1 <- match.data(post_match_nrp_dpp1, group = "all",distance = "prop_score", data = data_nrp_dpp, drop.unmatched = TRUE)
+
+fit_matched_dcd1 <- survfit(Surv(surv_time_365, dead_1y) ~ nrp, data = matched_nrp_dpp1)
+
+#matched KM
+ggsurvplot(fit_matched_dcd1, data = matched_nrp_dpp, risk.table = TRUE, 
+           legend.labs = c("DCD DPP","DCD NRP"),
+           legend.title = element_blank(),
+           pval = TRUE,
+           conf.int = TRUE,
+           palette = c("#7CA5CB","#A33E3E"),
+           ylim = c(0.80, 1.0),
+           xlim = c(0,365),
+           risk.table.fontsize = 3,  # Adjust the font size for the risk table
+           break.time.by = 100,      # Set the break time for the x-axis
+           ggtheme = theme_matched
+) +
+  labels_matched
+
+
+fit_cox_matched1 <- coxph(Surv(surv_time_365, dead_1y) ~
+                      nrp,
+                    data = matched_nrp_dpp1)
+
+summary(fit_cox_matched1)
+
+fit_coxme_matched1 <- coxme(Surv(surv_time_365, dead_1y) ~
+                      nrp + (1|REC_CTR_CD),
+                    data = matched_nrp_dpp1)
+
+summary(fit_coxme_matched1)
+```
+## COXME analysis without PS
+```{r}
+fit_coxme_unmatched1 <- coxme(Surv(surv_time_365, dead_1y) ~
+                      nrp + (1|REC_CTR_CD),
+                    data = data_nrp_dpp)
+
+summary(fit_coxme_unmatched1)
+```
+
+
+
+## Changing Definition of NRP to death-to-clamp time > 50 minutes
+```{r histogram}
+#histogram of amount of time between death to cross clamp
+hist_clamp_sens <- ggplot(complete_data_dcd, aes(x = death_to_clamp_min, fill = factor(procurement_type_sens)), alpha = 0.7) +
+  geom_histogram(binwidth = 1) +
+  labs(x = "Death-to-Cross-Clamping Time (Minutes)", y = "Frequency", fill = "Procurement Type") +
+  theme_light() +
+  theme(legend.position = "bottom",
+        panel.grid = element_blank(),
+        text = element_text(size = 8)) +
+  scale_fill_nrp(palette = "dpp_nrp", discrete = TRUE, labels = c("DPP", "NRP")) +
+  labs(fill = "Procurement Type")
+
+ggsave(paste0(path_save,"Figure_S2_histo_clamp.tiff"), hist_clamp_sens, dpi = "print",width=7.29, height = 3)
+
+```
+
+```{r propensity score match}
+data_nrp_dpp_sens <- complete_data_dcd %>% 
+  mutate(nrp_sens = ifelse(procurement_type_sens== "DCD_NRP_sens", 1, 0))
+
+#1:1 OLS PS matching with replacement
+post_match_nrp_dpp_sens <- matchit(nrp_sens ~ 
+                                wdt_time_qtile +
+                                rec_age_60 +
+                                treatment +
+                                don_age +
+                                don_bmi_qtile +
+                                don_angio,
+                   data = data_nrp_dpp_sens,method = "optimal",
+                   distance = "glm",
+                   link = "logit",
+                   estimand = "ATT",
+                   replace = FALSE)
+
+
+new.names <- c(`wdt_time_qtile_1st quartile` = "Withdrawal-to-Death Time: 1st Quartile",
+               treatment_ECMO = "Recipient Treatment: ECMO",
+               `treatment_High-dose Inotropes` = "Recipient Treatment: High-dose Inotropes",
+               treatment_None = "Recipient Treatment: None",
+               `don_bmi_qtile_2nd quartile` = "Donor BMI: 2nd Quartile",
+               `don_bmi_qtile_4th quartile` = "Donor BMI: 4th Quartile",
+               `rec_age_60_Over 60` = "Recipient Age: Over 60",
+               `wdt_time_qtile_2nd quartile` = "Withdrawal-to-Death Time: 2nd Quartile",
+               `treatment_IABP` = "Recipient Treatment: IABP",
+               `wdt_time_qtile_3rd quartile` = "Withdrawal-to-Death Time: 3rd Quartile",
+               treatment_Exception = "Recipient Treatment: Exception",
+               don_angio_Performed = "Donor Coronary Angiogram: Performed",
+               `treatment_Other MCS` = "Recipient Treatment: Other MCS",
+               `don_age` = "Donor Age (Years)",
+               `treatment_Low-dose Inotropes` = "Recipient Treatment: Low-dose Inotropes",
+               `wdt_time_qtile_4th quartile` = "Withdrawal-to-Death Time: 4th Quartile",
+               treatment_LVAD = "Recipient Treatment: LVAD",
+               `don_bmi_qtile_1st quartile` = "Donor BMI: 1st Quartile",
+               `don_bmi_qtile_3rd quartile` = "Donor BMI: 3rd Quartile")
+
+love_plot_nrp_dpp_sens <- love.plot(post_match_nrp_dpp_sens, 
+          drop.distance = TRUE, 
+          stars = "raw",
+          var.order = "adjusted",
+          var.names = new.names,
+          abs = TRUE,
+          line = TRUE, 
+          thresholds = c(m = .1),
+          colors = c("#A33E3E", "#7CA5CB")) +
+  theme_light() +
+  theme(legend.position = c(.75, .3),
+        legend.box.background = element_rect(), 
+        legend.box.margin = margin(1, 1, 1, 1),
+        axis.text.y = element_text(size = 10),
+        panel.grid = element_blank())
+
+
+ggsave(paste0(path_save,"Supplemental Figure 3 sensitvity analysis.tiff"), plot = love_plot_nrp_dpp_sens,height = 7,width = 14,units = "in")
+
+
+#get matched data
+matched_nrp_dpp_sens <- match.data(post_match_nrp_dpp_sens, group = "all",distance = "prop_score", data = data_nrp_dpp_sens, drop.unmatched = TRUE)
+
+
+```
+
+```{r km curve}
+
+# Fit Kaplan-Meier survival curves for each group
+fit_matched_dcd_sens <- survfit(Surv(surv_time_365, dead_1y) ~ nrp_sens, data = matched_nrp_dpp_sens)
+
+fit_dcd_sens <- survfit(Surv(surv_time_365, dead_1y) ~ nrp_sens, data = data_nrp_dpp_sens)
+
+#adjust grid structure
+grid.draw.ggsurvplot <- function(x){
+  survminer:::print.ggsurvplot(x, newpage = FALSE)
+}
+
+#pre-match KM with CI
+km_dcd_plot_sens <- ggsurvplot(fit_dcd_sens, data = data_nrp_dpp_sens, risk.table = TRUE, 
+           legend.labs = c("DPP", "NRP"),
+           pval = TRUE,
+           conf.int = TRUE,
+           palette = c("#7CA5CB","#A33E3E"),
+           ylim = c(0.80, 1.0),
+           xlim = c(0,365),
+           risk.table.fontsize = 3,  # Adjust the font size for the risk table
+           break.time.by = 100,      # Set the break time for the x-axis
+           ggtheme = theme_unmatched) +
+  labels_unmatched
+
+#matched KM
+km_dcd_matched_sens <- ggsurvplot(fit_matched_dcd_sens, data = matched_nrp_dpp_sens, risk.table = TRUE, 
+           legend.labs = c("DPP","NRP"),
+           legend.title = element_blank(),
+           pval = TRUE,
+           conf.int = TRUE,
+           palette = c("#7CA5CB","#A33E3E"),
+           ylim = c(0.80, 1.0),
+           xlim = c(0,365),
+           risk.table.fontsize = 3,  # Adjust the font size for the risk table
+           break.time.by = 100,      # Set the break time for the x-axis
+           ggtheme = theme_matched
+) +
+  labels_matched
+
+#make graphs with CI
+dcd_with_ci_sens <- list()
+dcd_with_ci_sens[[1]] <- km_dcd_plot_sens
+dcd_with_ci_sens[[2]] <- km_dcd_matched_sens
+dcd_with_ci_sens <- arrange_ggsurvplots(dcd_with_ci_sens, print = TRUE,
+  ncol = 2, nrow = 1, risk.table.height = 0.2)
+
+ggsave(paste0(path_save, "Supplemental Figure 4 Sensitivity.tiff"),dcd_with_ci_sens, dpi = "print",width=7.29, height = 5)
+```
+
+```{r}
+#COXPH model
+fit_cox_matched_sens <- coxph(Surv(surv_time_365, dead_1y) ~
+                      nrp_sens,
+                    data = matched_nrp_dpp_sens)
+
+summary(fit_cox_matched_sens)
+
+fit_cox_unmatched_sens <- coxph(Surv(surv_time_365, dead_1y) ~
+                      nrp_sens,
+                    data = data_nrp_dpp_sens)
+
+summary(fit_cox_unmatched_sens)
+
+export_summs(fit_cox_unmatched_sens,
+     fit_cox_matched_sens, 
+     scale = TRUE,
+     model.names = c("Unmatched", "PS Matched"),
+     coefs = c("Procurement Type NRP" = "nrp_sens"),
+     number_format = "%.2f",
+     statistics = c(N = "n", "N Events" = "nevent"),
+     align = ".",
+     error_format = "({conf.low} to {conf.high})",
+     to.file = "xlsx",
+     file.name = paste0(path_save,"Supplemental Table 4.xlsx"))
+```
+
+

@@ -1,0 +1,1141 @@
+---
+title: "Mortality Impact of NRP vs DPP Heart Procurement Techniques"
+author: "Julia Ran, Anji Wall, Nikhil Narang, Kiran Khush, Jordan Hoffman, Will Parker"
+date: "03/22/2023"
+output:
+  html_document:
+    toc: yes
+    toc_depth: '2'
+    df_print: paged
+    number_sections: yes
+  html_notebook:
+    theme: journal
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA, message = FALSE, eval = TRUE,
+                      fig.width = 6, fig.height = 4.5, fig.align = "right")
+```
+
+```{=tex}
+\setlength{\parskip}{6pt}
+\newpage
+```
+
+# Load packages
+
+```{r load packages}
+
+library(tidyverse)
+library(haven)
+library(rmdformats)
+library(ggpubr)
+library(here)
+library(readr)
+library(lubridate)
+library(AER)
+library(tinytex)
+library(knitr)
+library(geosphere)
+library(labelled)
+library(tableone)
+```
+
+# Import data
+
+```{r load data}
+
+path <- "C:/Users/julia/SRP/S&D/dataset/pubsaf2303/"
+
+cand_thor <- read_sas(paste0(path, "cand_thor.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+tx_hr <- read_sas(paste0(path, "tx_hr.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+txf_hr <- read_sas(paste0(path, "txf_hr.sas7bdat"), NULL) %>%  
+   zap_formats() %>% zap_labels()
+
+just_form_hr <- read_sas(paste0(path, "JustFormHR.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+just_form_hr_stat1 <- 
+  read_sas(paste0(path, "JustFormHRStat1.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+just_form_hr_stat2 <- 
+  read_sas(paste0(path, "JustFormHRStat2.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+just_form_hr_stat3 <- 
+  read_sas(paste0(path, "JustFormHRStat3.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+just_form_hr_stat4 <- 
+  read_sas(paste0(path, "JustFormHRStat4.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+risk_strat_data_hr <- 
+  read_sas(paste0(path, "RiskStratDataHR.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+just_form_hr_data_link <- 
+  read_sas(paste0(path, "JustFormHRDataLink.sas7bdat"), NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+status_just_episode <- 
+  read_sas(paste0(path,"StatusJustEpisode.sas7bdat"), NULL) %>%
+  zap_formats() %>% zap_labels()
+
+statjust_hr1a <- 
+  read_sas(paste0(path, "statjust_hr1a.sas7bdat"), NULL) %>%
+  zap_formats() %>% zap_labels()
+
+statjust_hr1b <- 
+  read_sas(paste0(path, "statjust_hr1b.sas7bdat"), NULL) %>%
+  zap_formats() %>% zap_labels()
+
+institution <- read_sas(paste0(path, "institution.sas7bdat"), NULL) %>%
+  zap_formats() %>% zap_labels()
+
+opo <- read_sas(paste0(path, "hist_opo_txc.sas7bdat"), NULL) %>%
+  zap_formats() %>% zap_labels()
+
+donor <- read_sas(paste0(path, "donor_deceased.sas7bdat"), NULL) %>%
+  zap_formats() %>%  zap_labels()
+
+deceasedtodonhosp <- read_sas(paste0(path, "deceasedtodonhosp.sas7bdat"), NULL) %>% 
+  zap_formats() %>% zap_labels()
+
+donorhospital <- read_sas(paste0(path, "donorhospital.sas7bdat"), NULL) %>% 
+  zap_formats() %>% zap_labels()
+
+donor_disposition <- read_sas(paste0(path, "donor_disposition.sas7bdat"), NULL) %>% 
+  zap_formats() %>% zap_labels()
+
+
+waitlist_center <- read_sas(paste0("C:/Users/julia/SRP/S&D/dataset/HospData/", "waitlist_center.sas7bdat"), NULL) %>% 
+  zap_formats() %>% zap_labels()
+
+dondeathdatetime <- read_sas(paste0(path, "dondeathdatetime.sas7bdat"), NULL) %>% 
+  zap_formats() %>% zap_labels()
+
+
+```
+
+# Specify Study Period
+
+```{r}
+study_start <- mdy("01/01/2019")
+study_end <- mdy("12/31/2021")
+
+#total 11027 transplants between study start and end dates
+
+tx_list <- tx_hr %>%
+    mutate(list_date = CAN_LISTING_DT, 
+           tx_date = REC_TX_DT,
+           last_status = TFL_LASTATUS, 
+           last_fu_date = TFL_LAFUDATE,
+           rec_age = REC_AGE_AT_TX, 
+           can_age = CAN_AGE_AT_LISTING,
+           REC_CTR_ID)
+
+tx_list <- tx_list %>%
+  filter(tx_date >= study_start & tx_date <= study_end)
+```
+
+# Filter Initial Listing
+
+In this section, we select only adult, heart-only transplant recipients who received a DCD hearts The following exclusion criteria were applied:
+
+1.  Age \<= 17 yo at the time of listing (n=1492)
+2.  Inactive listing status (n=0)
+5.  Had inappropriate listing status at the time of transplantation (e.g. had Status 1A/1B/2 assignment after the policy switch) (n=5)
+6. Received a DBD organ (n=__) 
+
+
+```{r}
+# remove candidates aged 17 or under (n= 1492)
+#get donor information
+
+#merge with donor and donor_disposition datasets to find more information about donor, procurement and storage
+donor_var <- donor %>% 
+  left_join(dondeathdatetime, by = "DONOR_ID") %>% 
+    dplyr::select(
+      DONOR_ID, PERS_ID,
+      DON_WGT_KG,
+      DON_HGT_CM,
+      don_lvef = DON_EJECT_FRACT,
+      don_insulin = DON_INSULIN,
+      don_anti_htn = DON_ANTI_HYPERTEN,
+      don_smoke = DON_HIST_CIGARETTE_GT20_PKYR,
+      
+      #donor tx
+      DON_TX,
+      
+      #time of withdrawing life support
+      don_dcd_withdrawal_dt = DON_DCD_SUPPORT_WITHDRAW_DT,
+      don_dcd_withdrawal_tm = DON_DCD_SUPPORT_WITHDRAW_TM,
+      
+      don_death_dt = DON_DEATH_PRONOUNCED_DT,
+      don_death_tm = DON_DEATH_PRONOUNCED_TM,
+      
+      #donor HCV NAT
+      don_hcv_nat = DON_HCV_NAT,
+      
+      #clamp time
+      don_clamp_dt = DON_CLAMP_DT,
+      don_clamp_tm = DON_CLAMP_TM, 
+      
+      #donor legally declared brain dead
+      don_dbd = DON_LEGALLY_BRAIN_DEAD,
+      
+      #non-heart beating donor (i.e. DCD)
+      don_dcd = DON_NON_HR_BEAT,
+      
+      #donor angiogram
+      DON_CORONARY_ANGIO
+      ) %>%
+  
+  mutate(
+    withdrawal_datetime = as.POSIXct(paste(don_dcd_withdrawal_dt, don_dcd_withdrawal_tm), format = "%Y-%m-%d %H:%M:%S") + 5*60,
+    
+    death_datetime = as.POSIXct(paste(don_death_dt, don_death_tm), format = "%Y-%m-%d %H:%M:%S") + 5*60,
+    
+    clamp_datetime = as.POSIXct(paste(don_clamp_dt, don_clamp_tm), format = "%Y-%m-%d %H:%M:%S"),
+    
+    #agonal time
+    wdt_time_min = as.numeric(difftime(death_datetime, withdrawal_datetime, units = "mins")),
+    #agonal-to-clamp time
+    withdrawal_to_clamp_min = as.numeric(difftime(clamp_datetime, withdrawal_datetime, units = "mins")),
+    #death-to-clamp time
+    death_to_clamp_min = as.numeric(difftime(clamp_datetime, death_datetime, units = "mins")),
+    
+    #donor BMI
+    don_bmi = DON_WGT_KG/(DON_HGT_CM/100)^2,
+    
+    #donor_angio binary variable
+    don_angio = ifelse(DON_CORONARY_ANGIO==1, 0, 1),
+    
+    #donor HCV NAT
+    don_hcv_nat = ifelse(don_hcv_nat=="P", "Positive", "Negative")
+)
+
+#get information on organ storage
+organ_stor <- donor_disposition %>% 
+  dplyr::select(DONOR_ID, PX_ID, DON_ORG, DON_DISPOSITION, DON_STORAGE) %>% 
+  filter(DON_DISPOSITION == 6) %>% 
+  filter(DON_ORG == "HR") 
+
+donor_info <- donor_var %>% 
+  mutate(source = "donor") %>% 
+  right_join(organ_stor, by = c("DONOR_ID")) %>% 
+  mutate(source = ifelse(is.na(source), "organ_stor", source)) 
+
+
+#merge donor information to tx_list
+tx_list1 <- tx_list %>% 
+  left_join(donor_info, by = c("DONOR_ID", "PX_ID"), suffix = c("_tx", "_d")) %>% 
+  mutate(procurement_type = case_when(
+    don_dcd == "N"~ "DBD",
+    don_dcd == "Y" & death_to_clamp_min >= 30 ~ "DCD_NRP",
+    don_dcd == "Y" & death_to_clamp_min < 30 ~ "DCD_DPP"
+  )) %>% 
+   mutate(procurement_type_sens = case_when(
+    don_dcd == "N"~ "DBD",
+    don_dcd == "Y" & death_to_clamp_min >= 50 ~ "DCD_NRP_sens",
+    don_dcd == "Y" & death_to_clamp_min < 50 ~ "DCD_DPP_sens"
+  ))
+
+
+
+#remove DBD (n=10708)
+tx_list2 <- tx_list1 %>% 
+  filter(don_dcd == "Y")
+
+#filter age within DCD (n=1)
+tx_list2 <- tx_list2 %>%
+  filter(can_age > 17)
+
+#filter out inactive listing (n=0)
+tx_list2 <- tx_list2 %>%
+  filter(CAN_LAST_STAT %in% 
+           c(1010,1020,1030,1110,1120,1130,1140,1150,1160,
+             2010,2020,2030,2110,2120,2130,2140,2150,2160)) 
+
+#remove candidates with wrong status assignment at time of transplant (n=0)
+tx_list2 <- tx_list2 %>% 
+  mutate(wrong_status = ifelse(CAN_LAST_STAT %in%
+           c(1010,1020,1030, 1090,2010,2020,2030),1,0)) %>% 
+  filter(wrong_status!=1)
+
+```
+
+# Identify Predictors of Post-Transplantation Mortality
+
+Next, we identified variables most likely to impact an organ recipient's post-transplantation survival based on components of the IMPACT score:
+
+1.  Age \> 60 years
+2.  Serum bilirubin, mg/dl
+3.  Dialysis between listing and transplant
+4.  Female sex
+5.  Heart failure etiology
+6.  Recent infection
+7.  Intra-aortic balloon pump
+8.  Mechanical ventilation pre-transplant
+9.  Race
+10. Temporary circulatory support (ECMO, VAD)
+11. Ventricular assist device
+
+Other recipient characteristics under consideration include
+
+12. Recipient functional status
+13. Recipient ABO blood type
+14. Recipient BMI
+15. Treatment received by the recipient immediately before transplantation
+16. Recipient educational background
+17. Recipient cardiac output (CAN_CARDIAC_OUTPUT)
+18. Recipient mean PCWP (REC_PCW_MEAN)
+
+Other donor characteristics:
+19. Donor age
+20. Donor gender
+21. Donor BMI
+22. Donor LVEF
+23. Donor use of anti-hypertensives
+24. Donor of insulin
+25. Smoking history of /> 20 pack years
+26. DCD vs. DBD status
+27. Donor ABO blood type 
+28. Donor disposition
+29. Donor coronary angiogram
+
+Organ preservation technique:
+
+Organ procurement technique:
+29. Intended method of procurement: TA-NRP or DPP based on death to clamp time
+
+We identify the following outcome variables
+
+29.  Death within 1-year post-transplantation (all causes) and date of death
+
+We will calculate the treatment variable - distance between candidate and donor hospitals - using longitude and latitude information
+
+```{r identify inputs}
+#with IMPACT score components, functional status, and ABO
+tx_list3 <- tx_list2 %>% 
+  dplyr::select(
+    #identification variables
+    PX_ID, TRR_ID, DONOR_ID, DON_OPO_CTR_ID, REC_CTR_ID,REC_CTR_CD, REC_CTR_TY,
+    
+    #transplant and survival information measurements
+    tx_date, 
+    last_status, 
+    last_fu_date, 
+    cod = TFL_COD, 
+    gf_date = TFL_GRAFT_DT,
+    TFL_DEATH_DT,
+    PERS_SSA_DEATH_DT,
+    PERS_OPTN_DEATH_DT,
+    
+    #total ischemic time
+    total_ischemic_time = REC_HR_ISCH,
+    warm_ischemic_time = DON_WARM_ISCH_TM_MINS,
+    
+    #candidate variables
+    status = CAN_LAST_STAT,
+    rec_age = REC_AGE_IN_MONTHS_AT_TX,
+    rec_edu = CAN_EDUCATION,
+    rec_bmi = REC_BMI,
+    rec_bilirubin = REC_TOT_BILI,
+    rec_dialysis = REC_DIAL,
+    rec_sex = CAN_GENDER,
+    rec_diagnosis = CAN_DGN,
+    rec_infection = REC_INFECT_IV_DRUG,
+    rec_iabp = REC_IABP,
+    rec_vent = REC_VENTILATOR,
+    rec_no_inhaled = REC_INHALED_NO,
+    rec_inotrope = REC_INOTROP,
+    rec_pge = REC_PGE,
+    rec_life_support = REC_LIFE_SUPPORT,
+    rec_other_life_support = REC_LIFE_SUPPORT_OTHER,
+    rec_defib = REC_IMPLANT_DEFIB,
+    rec_life_support_type = REC_LIFE_SUPPORT_TY,
+    rec_vent_event = REC_VENTILATOR_SUPPORT,
+    rec_vent_timeframe = REC_VENTILATOR_TIMEFRAME,
+    rec_race = CAN_RACE,
+    rec_abo = CAN_ABO,
+    rec_ecmo = REC_ECMO,
+    rec_vad = REC_VAD_TY,
+    rec_vad_b1 = REC_VAD1,
+    rec_vad_b2 = REC_VAD2,
+    rec_vad_tah = REC_VAD_TAH,
+    rec_removal_cd = CAN_REM_CD,
+    rec_hgt = CAN_HGT_CM,
+    rec_wgt = CAN_WGT_KG,
+    rec_co = CAN_CARDIAC_OUTPUT,
+    rec_pcwp = REC_PCW_MEAN,
+    rec_func_status = REC_FUNCTN_STAT,
+    
+    #donor information
+    don_age = DON_AGE,
+    don_sex = DON_GENDER,
+    don_creat = DON_CREAT,
+    don_abo = DON_ABO,
+    DONOR_ID, 
+    don_bmi,
+    don_lvef,
+    don_insulin,
+    don_anti_htn,
+    don_smoke,
+    don_angio,
+    #donor tx
+    DON_TX,
+    
+    #agonal time begins
+    don_dcd_withdrawal_dt,
+    don_dcd_withdrawal_tm,
+    don_death_dt,
+    don_death_tm,
+    
+    #clamp time
+    don_clamp_dt,
+    don_clamp_tm, 
+    
+    #non-heart beating donor (i.e. DCD)
+    don_dcd,
+    
+    #agonal time
+    wdt_time_min,
+    
+    #agonal-to-clamp time
+    withdrawal_to_clamp_min,
+    #death-to-clamp time
+    death_to_clamp_min,
+    
+    #procurement type
+    procurement_type,
+    
+    #procurement type sensitivity check
+    procurement_type_sens,
+    
+    #donor hcv nat
+    don_hcv_nat
+    ) %>%
+  
+  mutate(
+    rec_death_date = case_when(
+      !is.na(PERS_SSA_DEATH_DT) ~ PERS_SSA_DEATH_DT,
+      !is.na(TFL_DEATH_DT) ~ TFL_DEATH_DT),
+    
+    rec_race_desc = case_when(
+      rec_race == 2000 ~ "Hispanic/Latino",
+      rec_race == 1024 ~ "Unknown",
+      rec_race == 512 ~ "Indian Sub-continent",
+      rec_race == 256 ~ "Arab or Middle Eastern",
+      rec_race == 128 ~ "Native Hawaiian or Other Pacific Islander",
+      rec_race == 64 ~ "Asian",
+      rec_race == 32 ~ "American Indian or Alaska Native",
+      rec_race == 16 ~ "Black or African American",
+      rec_race == 8 ~ "White",
+      TRUE ~ "Multi-Racial"),
+    
+    cold_ischemic_time = total_ischemic_time - warm_ischemic_time,
+    rec_age = rec_age/12,
+    rec_age_60 = ifelse(rec_age > 60, 1, 0),
+    
+    #outcome variables
+    graft_failed = ifelse(!is.na(gf_date), 1, 0),
+    gf_1y = ifelse(!is.na(gf_date) & 
+                     (as.Date(gf_date) - as.Date(tx_date) < 366), 1, 0),
+    dead = ifelse(!is.na(rec_death_date), 1, 0),
+    dead_1y = ifelse(dead == 1 & 
+                            (as.Date(rec_death_date) - as.Date(tx_date) < 366), 1, 0),
+         retx = ifelse(last_status == "R", 1, 0)    ) 
+
+```
+
+
+# Linking status justification forms to PX_IDs
+
+```{r}
+post_policy_list <- tx_list3 
+
+just_form_hr_data_link <- just_form_hr_data_link %>% 
+  left_join(risk_strat_data_hr %>%
+              dplyr::select(px_id, WlregAuditId), by = "WlregAuditId") %>% 
+  mutate(PX_ID = px_id) %>% dplyr::select(-px_id)
+
+status_ep_with_PX_ID <- status_just_episode %>%
+  
+  left_join(just_form_hr_data_link %>% 
+              dplyr::select(WlregAuditId, JustId, PX_ID), by = "JustId") %>%
+  
+  filter(PX_ID %in% post_policy_list$PX_ID) %>%
+  
+  left_join(just_form_hr %>% 
+              dplyr::select(JustId, Exception), by = "JustId") %>%
+  
+  dplyr::select(PX_ID, JustId, Exception, ChangeDate)
+
+# for every patient, 1) find the latest change date, 2) if there are duplicates, 
+# query all JustId, usually only one of them should be filled
+post_policy_list <- post_policy_list %>% 
+  left_join(status_ep_with_PX_ID, by = c("PX_ID")) %>% 
+  group_by(PX_ID) %>% 
+  slice_max(ChangeDate) %>%  
+  filter(JustId == max(JustId)) %>% 
+  ungroup() 
+```
+
+# Status 1 justification form cleaning
+
+```{r}
+post_policy_status1 <- post_policy_list %>% 
+  filter(status == 2110) %>% 
+  pull(JustId)
+
+# select only justifications that appear in first_ep
+# coding life-threatening arrhythmia as an "exception"
+# there should be 311 people transplanted at Status 1
+status_1 <- just_form_hr_stat1 %>%
+  filter(JustId %in% post_policy_status1) %>%  
+  left_join(post_policy_list %>% 
+              dplyr::select(PX_ID, JustId, status, Exception), by = "JustId") %>% 
+  mutate(
+    treatment = case_when(
+      CriteriaEcmoSupport == TRUE ~ "ECMO",
+      CriteriaBivadSupport == TRUE ~ "Other MCS",
+      CriteriaMcsdSupport == TRUE | Exception == TRUE ~ "Exception")) %>%
+  dplyr::select(PX_ID, JustId, treatment, status, Exception, EcmoCardiacIndex,
+         CardiacIndexInotropeSupport, EcmoCapWedgePressure, EcmoWithoutHemo)
+
+status_1 %>% count(treatment)
+
+#1 patient did not have treatment type assigned
+```
+
+# Status 2 justification form cleaning
+
+```{r}
+#only true durable dischargeable LVAD crtieria for Status 2 is malfunction
+#labelling VT/VF as an exception
+post_policy_status2 <- post_policy_list %>% 
+  filter(status == 2120) %>% 
+  pull(JustId)
+
+status_2 <- just_form_hr_stat2 %>%
+  filter(JustId %in% post_policy_status2) %>%  
+  left_join(post_policy_list %>% 
+              dplyr::select(PX_ID, JustId, status, Exception), by = "JustId") %>%
+  mutate(
+    treatment = case_when(
+      CriteriaIabpSupport == TRUE ~ "IABP",
+      CriteriaMcsdMalfunction == TRUE ~ "LVAD", 
+      CriteriaDurableDevSupport == TRUE |  CriteriaMcsdEndovasSupp == TRUE | CriteriaLvadSupport == TRUE ~ "Other MCS",
+      CriteriaVentEpisode == TRUE ~ "Exception", 
+      Exception == TRUE ~ "Exception")) %>%
+  dplyr::select(PX_ID,JustId, treatment, status, IabpCardiacIndex, IabpCapWedgePressure,
+         IabpWithHemo, IabpWithoutHemo, IabpCardiacIndexInotropeSup)
+
+status_2 %>% count(treatment)
+status_2 %>% count()
+```
+
+# Status 3 justification form cleaning
+
+```{r}
+post_policy_status3 <- post_policy_list %>% 
+  filter(status == 2130) %>% pull(JustId)
+
+status_3 <- just_form_hr_stat3 %>%
+  filter(JustId %in% post_policy_status3) %>%
+  left_join(post_policy_list %>% 
+              dplyr::select(PX_ID, JustId, status, Exception), by = "JustId") %>%
+  mutate(
+    treatment = case_when(
+      CriteriaPercuSupport == TRUE ~ "Other MCS",
+      CriteriaLvadDiscSupport == TRUE | CriteriaMcsdWithHemo == TRUE | CriteriaMcsdWithPump == TRUE | CriteriaMcsdWithRhf == TRUE ~ "LVAD",
+      CriteriaMcsdInfection == TRUE | CriteriaMcsdMucosalBleed == TRUE |  CriteriaMcsdWithAI == TRUE | CriteriaLvadSupport == TRUE ~ "LVAD",
+      CriteriaInotropeSupport == TRUE ~ "High-dose Inotropes",
+      CriteriaVaEcmoSupport == TRUE ~ "ECMO",
+      CriteriaIabpSupport == TRUE ~ "IABP",
+      Exception == TRUE ~ "Exception")) %>%
+  
+  # Variables needed for the hemodynamic graphs from high dose inotrope candidates selected
+  dplyr::select(PX_ID, JustId, treatment, status, InoSysBloodPressure, InoCardiacIndex,
+         InoCapWedgePressure, InoInotropeSupport)
+
+status_3 %>% count(treatment)
+status_3 %>% count()
+```
+
+# Status 4 justification form cleaning
+
+```{r}
+post_policy_status4 <- post_policy_list %>% 
+  filter(status == 2140) %>% pull(JustId)
+
+
+status_4 <- just_form_hr_stat4 %>%
+  filter(JustId %in% post_policy_status4) %>%
+  left_join(post_policy_list %>% 
+              dplyr::select(PX_ID, JustId, status, Exception), by = "JustId") %>%
+  mutate(
+    treatment = case_when(
+      CriteriaLvadSupport == TRUE ~ "LVAD",
+      CriteriaInotropeSupport == TRUE ~ "Low-dose Inotropes",
+      CriteriaHeartDisease == TRUE | CriteriaIschemicHeart == TRUE |
+        CriteriaCardiomyopathy == TRUE | CriteriaRetransplant == TRUE ~ "None",
+      Exception == TRUE ~ "Exception")) %>%
+  dplyr::select(PX_ID,JustId, treatment, status, InotropeCardiacIndex, InotropePcwp)
+
+status_4 %>% count(treatment)
+status_4 %>% count()
+```
+
+# Status 5-6 justification form cleaning
+
+```{r}
+
+post_policy_status56 <- post_policy_list %>% 
+  filter(status == 2150 | status == 2160) %>% pull(JustId)
+
+status_5_6 <- post_policy_list %>%
+  filter(status %in% c(2150, 2160, 1150, 1160)) %>%
+  mutate(treatment = "None" ) %>%
+  dplyr::select(PX_ID, JustId, treatment, status)
+
+status_5_6 %>% count(treatment)
+```
+
+# Combine and create full post-policy dataset
+```{r}
+tx_list3 <- tx_list3 %>% 
+    mutate(PX_ID = ifelse(is.na(PX_ID) == FALSE, as.integer(PX_ID), PX_ID))
+
+post_justifications <- bind_rows(status_1, status_2, status_3, status_4, status_5_6) %>%
+  mutate(six_status = case_when(
+           status %in% c(1110, 2110) ~ 1,
+           status %in% c(1120, 2120) ~ 2,
+           status %in% c(1130, 2130) ~ 3,
+           status %in% c(1140, 2140) ~ 4,
+           status %in% c(1150, 2150) ~ 5,
+           status %in% c(1160, 2160) ~ 6)) 
+
+post_justifications %>% group_by(six_status) %>% count(treatment)
+post_justifications %>% group_by(six_status) %>% count()
+
+#there is one entry without treatment information. PX_ID = 1346842
+
+```
+
+# Data Formating
+
+This dataframe contains all transplants matched with their variables used for the analysis.
+
+```{r}
+#put together pre and post policy information contained in pre_policy_list and post_justifications respectively
+final_sample <- tx_list3 %>% 
+  left_join(post_justifications %>% dplyr::select(PX_ID, treatment), by = "PX_ID") %>% 
+  filter(!is.na(treatment) == TRUE) %>% 
+  filter(!is.na(procurement_type == TRUE))
+  
+
+#total sample size = 318
+final_sample %>%  count()
+
+#fix coding names
+final_sample <- final_sample %>% 
+  mutate(vad = case_when(
+    rec_vad == 1 ~ "None",
+    rec_vad == 2 ~ "LVAD",
+    rec_vad == 3 ~ "RVAD", 
+    rec_vad == 4 ~ "TAH", 
+    rec_vad == 5 ~ "LVAD+RVAD",
+    rec_vad == 6 ~ "Unspecified"))
+```
+
+# Link with Geo Data
+```{r}
+# Link donor id to donor hospital geographic data using deceasedtodonhosp
+donor_geo <- deceasedtodonhosp %>% 
+  dplyr::select(DONOR_ID, DON_HOSP_PROV_NUM) %>% 
+  left_join(donorhospital, by = c("DON_HOSP_PROV_NUM" = "PROVIDER_NUM"), keep = FALSE, na_matches = "never") %>% 
+  dplyr::select(DONOR_ID, DON_HOSP_PROV_NUM, HOSPITAL_NAME, LONGITUDE, LATITUDE) %>% 
+  distinct(DONOR_ID, .keep_all = TRUE)
+  
+#data quality check - no observation has no geographical information associated with donor hospital
+View(final_sample %>%dplyr::select(DONOR_ID) %>% 
+  left_join(donor_geo, by = "DONOR_ID", keep = FALSE, na_matches = "never") %>% 
+    filter(is.na(LONGITUDE))) 
+
+#merge donor geographic data to final_sample
+final_sample1 <- final_sample %>% 
+  left_join(donor_geo, by = "DONOR_ID", keep = FALSE, na_matches = "never") %>% 
+  rename(don_longitude = LONGITUDE,
+         don_latitude = LATITUDE) %>% 
+  filter(!is.na(don_longitude) & !is.na(don_latitude))
+
+#recipient location
+rec_geo <- waitlist_center %>% 
+  dplyr::select(TXC_CTR_ID, LONGITUDE, LATITUDE) %>% 
+  distinct() %>% 
+  filter(!is.na(TXC_CTR_ID))
+
+ 
+#data quality check - all observations have geographical information associated with recipient hospital
+final_sample %>%dplyr::select(REC_CTR_ID) %>% 
+  left_join(rec_geo, by = c("REC_CTR_ID" = "TXC_CTR_ID"), keep = FALSE, na_matches = "never") %>% 
+    filter(is.na(LONGITUDE))%>% 
+  distinct()
+
+#join recipient geographical information
+final_sample2 <- final_sample1 %>% 
+  left_join(rec_geo, by = c("REC_CTR_ID" = "TXC_CTR_ID"), keep = FALSE, na_matches = "never") %>% 
+  rename(rec_longitude = LONGITUDE,
+         rec_latitude = LATITUDE) 
+
+
+#compute distance between donor and recipient hospitals
+haversine<- function(long1, lat1, long2, lat2) {
+
+  stopifnot(is.numeric(long1),
+            is.numeric(lat1),
+            is.numeric(long2),
+            is.numeric(lat2),
+            long1 > -180,
+            long1 < 180,
+            lat1 > -180,
+            lat1 < 180,
+            long2 > -180,
+            long2 < 180,
+            lat2 > -180,
+            lat2 < 180  
+    )
+
+  long1 <- long1*pi/180
+  lat1 <- lat1*pi/180
+  long2 <- long2*pi/180
+  lat2 <- lat2*pi/180
+
+  R <- 6371 # Earth mean radius [km]
+  delta.long <- (long2 - long1)
+  delta.lat <- (lat2 - lat1)
+  a <- sin(delta.lat/2)^2 + cos(lat1) * cos(lat2) * sin(delta.long/2)^2
+  c <- 2 * asin(min(1,sqrt(a)))
+  d = R * c
+  d_nm = d * 0.539956803 
+  return(d_nm) # Distance in nautical miles
+}
+
+#add distance to dataset
+final_sample3 <- final_sample2 %>% 
+  mutate(distance = mapply(haversine, lat1=don_latitude, long1=don_longitude, lat2=rec_latitude, long2=rec_longitude))
+ 
+
+#sanity check: how many miles are hearts traveling
+hist(final_sample3$distance, breaks = 100, xlab = "Distance in Nautical Miles")
+
+#sanity check: monthly average distance in organ sharing drastically increased with the policy change
+test <- final_sample3 %>% 
+  mutate(month_year = as.yearmon(tx_date)) %>% 
+  group_by(month_year) %>% 
+  dplyr::summarize(mean_distance = mean(distance, na.rm=FALSE))
+
+
+#merge donor geographic data to oringial tx_hr
+test1 <- tx_hr %>% 
+  mutate(tx_date = REC_TX_DT) %>% 
+  filter(tx_date > mdy("01/01/2015"), tx_date < mdy("01/01/2022")) %>% 
+  left_join(donor_geo, by = "DONOR_ID", keep = FALSE, na_matches = "never") %>% 
+  rename(don_longitude = LONGITUDE,
+         don_latitude = LATITUDE) %>% 
+  left_join(rec_geo, by = c("REC_CTR_ID" = "TXC_CTR_ID"), keep = FALSE, na_matches = "never") %>% 
+  rename(rec_longitude = LONGITUDE,
+         rec_latitude = LATITUDE)  %>% 
+  dplyr::select(PX_ID, tx_date, don_latitude, don_longitude, rec_latitude, rec_longitude) %>% 
+  filter(complete.cases(.)) 
+
+
+test1 <- test1 %>% 
+  mutate(distance = mapply(haversine, lat1=don_latitude, long1=don_longitude, lat2=rec_latitude, long2=rec_longitude)) %>% 
+  mutate(month_year = as.yearmon(tx_date)) %>% 
+  group_by(month_year) %>% 
+  dplyr::summarize(mean_distance = mean(distance, na.rm=FALSE))
+
+monthly_distance <- ggplot(test, aes(x = month_year, y = mean_distance)) +
+  geom_line(color = "gray75", size = 0.5) +
+  geom_point(shape = 21, color = "gray30", fill = "hotpink", size = 1.5, stroke = 0.5) +
+  scale_x_yearmon() +
+  scale_y_continuous("Mean Distance Travelled") +
+  theme_bw()
+
+monthly_distance1 <- ggplot(test1, aes(x = month_year, y = mean_distance)) +
+  geom_line(color = "gray75", size = 0.5) +
+  geom_point(shape = 21, color = "gray30", fill = "hotpink", size = 1.5, stroke = 0.5) +
+  scale_x_yearmon() +
+  scale_y_continuous("Mean Distance Travelled") +
+  theme_bw()
+ggsave(filename = "C:/Users/julia/SRP/S&D/Drafts/Distance/mean_distance_over_time_new1.png", plot = monthly_distance1)
+```
+
+```{r}
+final_sample4 <- final_sample3 %>% 
+  left_join(cand_thor %>% 
+              dplyr::select(PX_ID, CAN_MOST_RECENT_CREAT, 
+                     CAN_PRIMARY_PAY, 
+                     CAN_HIST_CIGARETTE, CAN_WORK_INCOME, CAN_EDUCATION, 
+                     CAN_PRIMARY_PAY, CAN_REM_DT, CAN_REM_CD), by = "PX_ID") %>% 
+  left_join(donor %>% 
+              dplyr::select(DONOR_ID, don_bun = DON_BUN, don_race = DON_RACE), by = "DONOR_ID")
+
+final_sample4 <- final_sample4 %>%
+  mutate(
+        simple_diagnosis = case_when(
+          rec_diagnosis  == 1000 | rec_diagnosis  == 1050 ~ "Idiopathic",
+          rec_diagnosis  == 1007 ~ "Ischemic",
+          rec_diagnosis  == 1203 | rec_diagnosis  == 1205 | rec_diagnosis  == 1207 ~ "Congenital",
+          TRUE ~ "Other"),
+        
+        diagnosis = factor(simple_diagnosis, 
+                           levels = c("Idiopathic cardiomyopathy", 
+                                      "Ischemic cardiomyopathy", 
+                                      "Congenital cardiomyopathy", 
+                                      "Other")),
+      
+          female_gfr = if_else(rec_sex == "F", 0.742, 1),
+        
+        black_gfr = if_else(rec_race == "Black", 1.21, 1),
+        
+        eGFR = 175 * ((CAN_MOST_RECENT_CREAT)^(-1.154)) * (rec_age^(-0.203))
+        * female_gfr * black_gfr,
+        
+        functional_status = case_when(
+          rec_func_status == 1 | (rec_func_status > 2069) ~ 
+            "Limited Impairment, 100-70%",
+          rec_func_status == 2 | 
+            (rec_func_status > 2049 & rec_func_status < 2061) ~ 
+            "Moderate Impairment, 50-60%",
+          rec_func_status == 3 | 
+            (rec_func_status > 2000 & rec_func_status < 2041) ~ 
+            "Severe Impairment ≥ 40%",
+          TRUE ~ "Unknown"),
+        
+        functional_status = ifelse(is.na(functional_status), 
+                                   "Unknown", functional_status),
+        
+        functional_status = factor(functional_status),
+        
+        body_surface_area = sqrt(rec_hgt * rec_wgt / 3600),
+        
+        cardiac_index = as.numeric(rec_co / body_surface_area),
+        
+        cardiac_index = ifelse(cardiac_index > 10, NA, cardiac_index),
+        
+        payor = case_when(
+          CAN_PRIMARY_PAY %in% c(3,4,13) ~ "Medicare",
+          CAN_PRIMARY_PAY ==2 ~ "Medicaid",
+          CAN_PRIMARY_PAY == 1 ~ "Private",
+          TRUE ~ "Other"),
+        
+        rec_smoke = case_when(
+           CAN_HIST_CIGARETTE == "Y" ~ "Smoking history",
+           CAN_HIST_CIGARETTE == "N" ~ "No prior smoking history"),
+        
+        rec_work = case_when(
+           CAN_WORK_INCOME == "N" ~ "Not working",
+           CAN_WORK_INCOME == "Y" ~ "Working"),
+        
+        rec_edu = case_when(
+          CAN_EDUCATION %in% c(4,5,6) ~ "College",
+          CAN_EDUCATION == 3 ~ "High School",
+          TRUE ~ "Less than high school or other"),
+        
+        rec_abo = factor(
+           case_when(
+             rec_abo %in% c("A", "A1", "A2") ~ "A",
+             rec_abo %in% c("A1B", "A2B") ~ "AB",
+             TRUE ~ rec_abo)),
+        
+        don_abo = factor(
+           case_when(
+             don_abo %in% c("A", "A1", "A2") ~ "A",
+             don_abo %in% c("A1B", "A2B") ~ "AB",
+             TRUE ~ don_abo)),
+        
+        rem_dt = CAN_REM_DT,
+        
+        final_dt = case_when(
+          is.na(rec_death_date) == FALSE ~ rec_death_date,
+          is.na(last_fu_date) == FALSE ~ last_fu_date,
+          TRUE ~ rem_dt),
+        
+        obs_days = final_dt - tx_date)
+```
+
+```{r}
+final_sample5 <- final_sample4 %>% 
+  mutate(
+    # Recipient survival time (or time at risk) for survival modeling
+    surv_time = as.numeric(final_dt - tx_date),
+    
+    # Recipient survival time, administratively censored at 1 year
+    surv_time_365 = ifelse(surv_time >= 365, 365, surv_time),
+    
+    #Time until primary graft failure
+    gf_time = as.numeric(gf_date - tx_date),
+    
+    #Time until primary graft failure, administratively censored at 1 year
+    gf_time_365 = ifelse(gf_time >= 365, 365, gf_time),
+    
+    status = factor(status, levels = c(2110, 2120, 2130, 2140, 2150, 2160),
+                        labels = c("Status 1", "Status 2", "Status 3", "Status 4", "Status 5", "Status 6")),
+    rec_age_60 = factor(rec_age_60, levels = c(0, 1),
+                               labels = c("Under 60", "Over 60")),
+    bilirubin_bins = case_when(
+      rec_bilirubin < 1 ~ 0,
+      rec_bilirubin >= 1 & rec_bilirubin < 2 ~ 1,
+      rec_bilirubin >= 2 & rec_bilirubin < 4 ~ 2,
+      rec_bilirubin >= 4 ~ 3),
+    
+    bilirubin_bins = factor(bilirubin_bins, levels = c(0, 1, 2, 3),
+                            labels = c("0-0.99", "1-1.99",
+                                       "2-3.99", "> 4")),
+    eGFR_bins = case_when(
+      eGFR >= 50 ~ 0,
+      eGFR >= 30 & eGFR < 50 ~ 1,
+      eGFR < 30 ~ 2),
+    eGFR_bins = factor(eGFR_bins, levels = c(0, 1, 2),
+                       labels = c("> 50", "30-49", "< 30")),
+    rec_dialysis = ifelse(rec_dialysis == "Y", 1, 0),
+    dialysis_factor = factor(rec_dialysis, levels = c(0, 1),
+                             labels = c("None", "On dialysis")),
+    sex = ifelse(rec_sex == "M", 0, 1),
+    
+    female_sex = factor(sex, levels = c(0, 1),
+                        labels = c("Male", "Female")),
+    
+    simple_diagnosis = factor(simple_diagnosis, 
+                              levels = c("Idiopathic",
+                                         "Ischemic",
+                                         "Congenital",
+                                         "Other"),
+                              labels = c("Idiopathic cardiomyopathy",
+                                         "Ischemic cardiomyopathy",
+                                         "Congenital heart disease",
+                                         "Other")),
+    rec_infection = ifelse(rec_infection == "Y", 1, 0),
+    
+    dead = factor(rec_infection, levels = c(0, 1),
+                              labels = c("None",
+                                         "Infection requiring IV antibiotics")),
+    ventilator = factor(rec_vent, levels = c(0, 1),
+                               labels = c("None",
+                                          "Mechanical ventilation")),
+    simple_race = case_when(
+      rec_race == 8 ~ "White",
+      rec_race == 16 ~ "Black",
+      rec_race == 2000 ~ "Hispanic",
+      TRUE ~ "Other"),
+    
+    simple_race = factor(simple_race, levels = c("White", "Black", "Hispanic", "Other")),
+    
+    tMCS = ifelse(
+      (treatment == "LVAD" & status == "Status 1") | 
+        (treatment == "LVAD" & status == "Status 2" ) |
+        (treatment == "Other MCS" & status == "Status 1") | 
+        (treatment == "Other MCS" & status == "Status 2") | 
+        (treatment == "ECMO"), 1, 0),
+    tMCS = factor(tMCS, levels = c(0, 1),
+                         labels = c("None", "Temporary MCS")),
+    vad = ifelse(
+      (treatment == "LVAD" & status == "Status 3") |
+        (treatment == "LVAD" & status == "Status 4"), 1, 0),
+    
+    vad = factor(vad, levels = c(0, 1),
+                        labels = c("None", "LVAD")),
+    
+    simple_don_race = case_when(
+      don_race == 8 ~ "White",
+      don_race == 16 ~ "Black",
+      don_race == 2000 ~ "Hispanic",
+      TRUE ~ "Other"),
+    
+    simple_don_race = factor(simple_don_race, 
+                             levels = c("White", "Black", "Hispanic", "Other")),
+    
+    race_mismatch = ifelse(simple_race == simple_don_race, 0, 1),
+    
+    race_mismatch = factor(race_mismatch, levels = c(0, 1),
+                                  labels = c("None", "Donor/recipient race mismatch")),
+    don_bun_creat_ratio = don_bun / don_creat,
+    don_bun_creat_ratio_over_30 = ifelse(don_bun_creat_ratio >= 30, 1, 0),
+    don_bun_creat_ratio_over_30_factor = factor(don_bun_creat_ratio_over_30,
+                                         levels = c(0, 1),
+                                         labels = c("Under 30", "Over 30")),
+    don_anti_htn = case_when(
+      don_anti_htn == "U" ~ "Unknown",
+      don_anti_htn == "Y" ~ "Yes",
+      don_anti_htn == "N" ~ "No",
+      TRUE ~ "Unknown"),
+    
+    don_anti_htn = factor(don_anti_htn, 
+                             levels = c("Unknown", "Yes", "No")),
+    
+    don_insulin = case_when(
+      don_insulin == "U" ~ "Unknown",
+      don_insulin == "Y" ~ "Yes",
+      don_insulin == "N" ~ "No",
+      TRUE ~ "Unknown"),
+    
+    don_insulin = factor(don_insulin, 
+                             levels = c("Unknown", "Yes", "No")),
+    
+    don_smoke = case_when(
+      don_smoke == "U" ~ "Unknown",
+      don_smoke == "Y" ~ "Yes",
+      don_smoke == "N" ~ "No",
+      TRUE ~ "Unknown"),
+    
+    don_smoke = factor(don_smoke, 
+                             levels = c("Unknown", "Yes", "No")),
+    don_sex = ifelse(don_sex == "M", 0, 1),
+    
+    don_female_sex = factor(don_sex, levels = c(0, 1),
+                        labels = c("Male", "Female")), 
+    
+    don_dcd = ifelse(don_dcd == "Y", 1, 0),
+    
+    procurement_type = factor(procurement_type, 
+                              levels = c("DCD_DPP", "DCD_NRP")),
+    
+    don_angio = factor(don_angio,
+                       levels = c(0,1),
+                       labels = c("Not performed", "Performed"))
+    
+    ) 
+
+final_sample5 <- final_sample5 %>% 
+  set_variable_labels(total_ischemic_time = "Donor heart total ischemic time",
+                      distance = "Distance between donor and candidate (NM)",
+                      status = "Waitlist status at transplant",
+                      rec_age_60 = "Recipient age",
+                      bilirubin_bins = "Recipient Serum bilirubin Bin",
+                      eGFR_bins = "Estimated GFR (mL/min)",
+                      simple_race = "Recipient race/ethnicity",
+                      tMCS = "Temporary MCS",
+                      vad = "LVAD",
+                      race_mismatch = "Donor/recipient race mismatch",
+                      rec_age = "Recipient age",
+                      rec_age_60 = "Recipient age over 60",
+                      rec_bmi = "Recipient BMI",
+                      rec_bilirubin = "Recipient Serum bilirubin (mg/dl)",
+                      rec_dialysis = "Pre-transplant dialysis",
+                      rec_sex = "Recipient sex (female)",
+                      female_sex = "Recipient sex",
+                      don_female_sex = "Donor female sex",
+                      don_abo = "Donor ABO bood type",
+                      procurement_type = "Organ Recovery Technique (DPP vs NRP)",
+                      don_dcd = "DCD Donor",
+                      don_lvef = "Donor LVEF",
+                      rec_co = "Recipient cardiac output",
+                      rec_pcwp = "Recipient PCWP",
+                      treatment = "Treatment received immediately prior to transplant",
+                      rec_infection = "Recipient pre-transplant infection",
+                      rec_iabp = "IABP",
+                      rec_vent = "Pre-transplant mechanical ventilatory support",
+                      eGFR = "Recipient Estimated GFR (mL/min)",
+                      rec_abo = "Recipient ABO blood type",
+                      simple_diagnosis = "Heart failure etiology",
+                      don_age = "Donor age (years)",
+                      don_female_sex = "Donor female sex",
+                      don_bmi = "Donor BMI (kg/m2)",
+                      don_lvef = "Donor LVEF (%)",
+                      don_smoke = "Donor cumulative smoking history exceeding 20 pack years",
+                      don_bun_creat_ratio = "Donor BUN/creatinine ratio",
+                      don_bun_creat_ratio_over_30 =
+                        "Donor BUN/creatinine ratio over 30",
+                      don_bun_creat_ratio_over_30_factor = 
+                        "Donor BUN/creatinine ratio",
+                      don_abo = "Donor ABO blood type",
+                      procurement_type = "Organ procurement technique",
+                      don_dcd = "DCD or DBD donor",
+                      wdt_time_min = "DCD Time from Withdrawal of Life Support to Death (min)",
+                      death_to_clamp_min = "Death-to-Cross-Clamp time (min)",
+                      don_angio = "Donor coronary angiogram",
+                      don_hcv_nat = "Donor HCV NAT serology positive "
+                      
+                      ) %>% 
+  dplyr::select(-ends_with(".y")) %>%
+  dplyr::select(-ends_with(".x"))
+```
+
+
+```{r}
+final_sample5 <- final_sample5 %>% 
+  dplyr::select(-c(gf_time_365, gf_time, gf_date, rec_vad_tah, rec_defib, rec_vad_b2, gf_1y)) %>%  
+  dplyr::select(-c(TRR_ID, DONOR_ID, tx_date, last_fu_date, TFL_DEATH_DT, PERS_OPTN_DEATH_DT, don_longitude, don_latitude, rec_longitude, rec_latitude, PERS_SSA_DEATH_DT, PERS_OPTN_DEATH_DT))
+
+
+complete_data_dcd <- final_sample5 %>% 
+    filter(complete.cases(PX_ID, 
+    dead_1y, surv_time_365, 
+    procurement_type, 
+    procurement_type_sens,
+    #distance,
+    rec_age_60,
+    #status,
+    #rec_bilirubin,
+    #rec_dialysis,
+    #rec_sex,
+    #simple_diagnosis,
+    #rec_infection,
+    treatment,
+    #rec_race_desc,
+    #tMCS,
+    #vad,
+    #functional_status,
+    #rec_abo,
+    #rec_bmi,
+    #rec_edu,
+    #rec_co,
+    #rec_pcwp,
+    #rec_smoke,
+    #rec_work,
+    REC_CTR_CD,
+    don_age,
+    #don_sex,
+    #don_race,
+    don_bmi,
+    #don_lvef,
+    #don_anti_htn,
+    #don_insulin,
+    #don_smoke,
+    #don_abo,
+    #don_creat,
+    #don_bun,
+    death_to_clamp_min,
+    wdt_time_min))
+```
+
+
+# Save data
+
+```{r, eval = FALSE}
+#final sample with geodata
+write_csv(complete_data_dcd, "complete_data_dcd_0915.csv")
+```
+
+```{r}
+save(complete_data_dcd, tx_hr, donor_info, donor, donor_geo, rec_geo, file = paste0(path, "clean_data0911.RData"))
+```
+
+
+
